@@ -363,8 +363,51 @@ interface UserConfig {
 |----------|----------|------|
 | 用户配置 | JSON 文件 | `%APPDATA%/mijia-sticky/config.json` |
 | 设备缓存 | SQLite | `%APPDATA%/mijia-sticky/devices.db` |
-| 日志文件 | 文本文件 | `%APPDATA%/mijia-sticky/logs/` |
+| 日志数据 | SQLite + JSONL 归档 | `%APPDATA%/mijia-sticky/logs.db` + `%APPDATA%/mijia-sticky/logs/archive/` |
 | 批处理脚本 | 文件系统 | `C:\mijia-scripts\` |
+
+### 7.3 日志存储架构
+
+采用**冷热数据分离**策略：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Logger                             │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  ┌─────────────────┐      ┌─────────────────────────┐  │
+│  │  热日志 (SQLite) │      │   冷日志 (JSONL 归档)    │  │
+│  │                 │      │                         │  │
+│  │  - 最近 7 天日志  │      │   - 7 天前日志归档       │  │
+│  │  - 支持 SQL 查询  │      │   - 压缩存储            │  │
+│  │  - 索引优化     │      │   - 用于审计/导出       │  │
+│  └─────────────────┘      └─────────────────────────┘  │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+**SQLite 表结构：**
+
+```sql
+CREATE TABLE logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp DATETIME NOT NULL,
+  level TEXT NOT NULL CHECK(level IN ('DEBUG', 'INFO', 'WARN', 'ERROR')),
+  module TEXT NOT NULL,
+  message TEXT NOT NULL,
+  meta TEXT,  -- JSON 字符串
+  stack TEXT,
+  
+  INDEX idx_timestamp (timestamp),
+  INDEX idx_level (level),
+  INDEX idx_module (module)
+);
+```
+
+**归档策略：**
+- 热数据：最近 7 天，存储在 SQLite 中，支持快速查询
+- 冷数据：7 天前，归档到 JSONL 文件，可选压缩
+- 自动清理：保留最近 30 天归档
 
 ---
 
@@ -426,20 +469,23 @@ Phase 1 ──► Phase 2 ──► Phase 3
 
 ---
 
-## 10. 附录
+## 9. 附录
 
-### 10.1 参考文档
+### 9.1 参考文档
 
 - [PRD.md](./PRD.md) - 产品需求文档
 - [Electron 官方文档](https://www.electronjs.org/docs)
 - [python-miio 文档](https://python-miio.readthedocs.io/)
 - [OpenClaw 文档](https://github.com/openclaw/openclaw)
+- [better-sqlite3 文档](https://github.com/WiseLibs/better-sqlite3)
+- [FastAPI 文档](https://fastapi.tiangolo.com/)
 
-### 10.2 文档修订历史
+### 9.2 文档修订历史
 
 | 版本 | 日期 | 作者 | 变更说明 |
 |------|------|------|----------|
 | v1.0 | 2026-03-17 | - | 初始版本 |
+| v1.1 | 2026-03-17 | - | 更新日志存储架构为 SQLite + JSONL 归档 |
 
 ---
 
