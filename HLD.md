@@ -1,4 +1,4 @@
-# 米家桌面便利贴 - 概要设计文档 (HLD)
+﻿# 米家桌面便利贴 - 概要设计文档 (HLD)
 
 ## 1. 文档信息
 
@@ -409,6 +409,59 @@ CREATE INDEX idx_devices_type ON devices(type);
 
 **总计：** 6 周左右
 
+### 9.1 建议实施顺序
+
+当前建议按下面的顺序推进，这样能最快形成可运行闭环，并把最高风险前置暴露：
+
+1. 先做工程骨架和 M04
+   - 搭 `packages/desktop-app`
+   - 确认 Electron 窗口、preload、IPC 白名单、基础状态管理
+   - 落 `config.json`、默认配置、备份恢复、服务地址配置
+   - 先把 mihomeBridge / localControl 的 URL、超时和 `authStoragePath` 固定下来
+
+2. 再做 MiHome Bridge Service 与 M01 最小闭环
+   - 搭 `packages/mihome-bridge-service`
+   - 先实现 `startQrLogin`、`pollQrLogin`、会话复用、获取 `homes/devices`
+   - Electron 侧先跑通“扫码登录 -> 同步设备 -> 写 SQLite 缓存”
+   - 这个阶段先不追求所有设备都能控制，只追求登录和同步可靠
+
+3. 接着做 M03 的最小可用界面
+   - 先实现扫码登录弹窗、同步按钮、设备列表空态/加载态/错误态
+   - 用真实 M01 数据把首屏跑通
+   - 先不做复杂细节，只保证“能登录、能看到设备”
+
+4. 然后做 M02 的云控主链路
+   - 先接 MiHome Bridge 的云端控制接口
+   - 优先覆盖灯、插座、开关三类设备
+   - 先实现 `turnOn` / `turnOff` / `setBrightness`
+   - 这个阶段目标是“至少一批真实设备能被成功控制”
+
+5. 最后补 M02 的本地回退与 M07
+   - 搭 `packages/local-control-service`
+   - 接入 `python-miio` 做本地回退与状态查询
+   - 补日志、错误追踪、服务健康检查和配置联动
+
+### 9.2 里程碑定义
+
+| 里程碑 | 通过标准 |
+|--------|----------|
+| Milestone A | 应用能启动，配置可读写，窗口行为正常 |
+| Milestone B | 可以扫码登录，并在重启后复用登录态 |
+| Milestone C | 可以同步家庭/房间/设备，并在 UI 中展示 |
+| Milestone D | 至少一类真实设备可以通过云控成功开关 |
+| Milestone E | 云控失败时，部分设备可通过本地回退继续控制 |
+
+### 9.3 当前建议的首个开发模块
+
+如果现在立刻开工，我建议先做 `M04 配置管理模块`，但不是孤立地做，而是和工程骨架一起做。
+
+原因：
+- 它是所有后续模块的公共前置条件，尤其是服务地址、认证文件路径、刷新策略都会依赖它。
+- 风险低，适合先把项目结构、类型定义、IPC 约定、文件落盘路径统一下来。
+- 做完 M04 之后，M01 和 M02 都能直接接入，不会反复返工配置模型。
+
+做完 M04 后，下一跳就直接进入 `MiHome Bridge Service + M01`，不要先去做复杂 UI，也不要先做本地回退。
+
 ---
 
 ## 10. 风险与应对
@@ -434,3 +487,5 @@ CREATE INDEX idx_devices_type ON devices(type);
 ---
 
 **文档结束**
+
+
