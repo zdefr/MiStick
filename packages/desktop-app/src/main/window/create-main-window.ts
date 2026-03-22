@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { BrowserWindow } from 'electron';
 import type { AppConfig } from '../../shared/config/types';
+import { applyWindowConfig } from './apply-window-config';
 import { resolveInitialWindowBounds } from './window-state';
 
 export function createMainWindow(config: AppConfig): BrowserWindow {
@@ -25,7 +26,7 @@ export function createMainWindow(config: AppConfig): BrowserWindow {
     },
   });
 
-  window.setOpacity(config.window.opacity);
+  applyWindowConfig(window, config);
 
   window.once('ready-to-show', () => {
     window.show();

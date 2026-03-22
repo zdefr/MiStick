@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import type { ConfigService } from '../modules/config';
+import { applyWindowConfig } from '../window/apply-window-config';
 import { resolveSnappedWindowPosition } from '../window/window-state';
 
 interface IpcServices {
@@ -45,7 +46,14 @@ export function registerIpcHandlers({ configService }: IpcServices): void {
 
   replaceHandler('config:load', async () => configService.load());
 
-  replaceHandler('config:save', async (_event, patch) => configService.save(patch));
+  replaceHandler('config:save', async (event, patch) => {
+    const savedConfig = await configService.save(patch);
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (targetWindow) {
+      applyWindowConfig(targetWindow, savedConfig);
+    }
+    return savedConfig;
+  });
 
   replaceHandler('config:get', async (_event, { key }) => {
     if (typeof key !== 'string' || key.trim() === '') {
@@ -55,11 +63,16 @@ export function registerIpcHandlers({ configService }: IpcServices): void {
     return configService.getByPath(key);
   });
 
-  replaceHandler('config:set', async (_event, { key, value }) => {
+  replaceHandler('config:set', async (event, { key, value }) => {
     if (typeof key !== 'string' || key.trim() === '') {
       throw new Error('config:set requires a non-empty key');
     }
 
-    return configService.setByPath(key, value);
+    const savedConfig = await configService.setByPath(key, value);
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (targetWindow) {
+      applyWindowConfig(targetWindow, savedConfig);
+    }
+    return savedConfig;
   });
 }
