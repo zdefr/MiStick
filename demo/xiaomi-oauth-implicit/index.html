@@ -1,0 +1,205 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Xiaomi OAuth Implicit Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f0e8;
+      --panel: #fffaf2;
+      --text: #2f261a;
+      --muted: #6b5d4c;
+      --accent: #d97706;
+      --border: #eadfcd;
+    }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(135deg, #f7f2ea, #efe4d3);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 760px;
+      margin: 48px auto;
+      padding: 24px;
+    }
+    .panel {
+      background: rgba(255, 250, 242, 0.94);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(78, 54, 24, 0.08);
+      padding: 24px;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 28px;
+    }
+    p, li {
+      line-height: 1.6;
+      color: var(--muted);
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+      margin-top: 20px;
+    }
+    label {
+      font-weight: 600;
+      display: block;
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #d8c9b4;
+      background: #fff;
+      font-size: 14px;
+    }
+    button {
+      appearance: none;
+      border: none;
+      border-radius: 999px;
+      padding: 13px 18px;
+      background: var(--accent);
+      color: white;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #8a7b67;
+    }
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+    .tips {
+      margin-top: 24px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: #fff7e8;
+      border: 1px solid #f0d8a8;
+    }
+    code {
+      background: #f3eadc;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>Xiaomi OAuth Implicit Demo</h1>
+      <p>这个页面只做最小验证：发起小米账号登录授权，并让回调页直接打印 <code>access_token</code>。</p>
+
+      <div class="grid">
+        <div>
+          <label for="clientId">App ID / client_id</label>
+          <input id="clientId" placeholder="输入你在小米开放平台申请的 App ID">
+        </div>
+        <div>
+          <label for="redirectUri">redirect_uri</label>
+          <input id="redirectUri" value="http://127.0.0.1:8787/callback.html">
+        </div>
+        <div>
+          <label for="scope">scope</label>
+          <input id="scope" placeholder="可留空，或填写已获批 scope，如 1 6000">
+        </div>
+        <div>
+          <label for="state">state</label>
+          <input id="state" placeholder="留空会自动生成随机 state">
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="loginBtn">使用小米账号登录</button>
+        <button id="resetBtn" class="secondary" type="button">清空本地配置</button>
+      </div>
+
+      <div class="tips">
+        <strong>提示</strong>
+        <ul>
+          <li>需要先在小米开放平台注册应用，并配置和这里一致的 <code>redirect_uri</code>。</li>
+          <li>本 demo 使用 <code>response_type=token</code>，回调后令牌会出现在 URL fragment。</li>
+          <li>如果你只是验证授权链路，<code>scope</code> 可以先留空。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const storageKey = 'xiaomi-oauth-implicit-demo';
+    const clientIdInput = document.getElementById('clientId');
+    const redirectUriInput = document.getElementById('redirectUri');
+    const scopeInput = document.getElementById('scope');
+    const stateInput = document.getElementById('state');
+
+    function randomState() {
+      return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    function loadForm() {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
+      clientIdInput.value = saved.clientId || '';
+      redirectUriInput.value = saved.redirectUri || 'http://127.0.0.1:8787/callback.html';
+      scopeInput.value = saved.scope || '';
+      stateInput.value = saved.state || '';
+    }
+
+    function saveForm() {
+      const next = {
+        clientId: clientIdInput.value.trim(),
+        redirectUri: redirectUriInput.value.trim(),
+        scope: scopeInput.value.trim(),
+        state: stateInput.value.trim(),
+      };
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    }
+
+    document.getElementById('loginBtn').addEventListener('click', () => {
+      const form = saveForm();
+      if (!form.clientId) {
+        alert('请先填写 client_id');
+        return;
+      }
+      if (!form.redirectUri) {
+        alert('请先填写 redirect_uri');
+        return;
+      }
+
+      const state = form.state || randomState();
+      stateInput.value = state;
+      saveForm();
+      sessionStorage.setItem('xiaomi-oauth-state', state);
+
+      const authUrl = new URL('https://account.xiaomi.com/oauth2/authorize');
+      authUrl.searchParams.set('client_id', form.clientId);
+      authUrl.searchParams.set('redirect_uri', form.redirectUri);
+      authUrl.searchParams.set('response_type', 'token');
+      authUrl.searchParams.set('state', state);
+      authUrl.searchParams.set('skip_confirm', 'true');
+      if (form.scope) {
+        authUrl.searchParams.set('scope', form.scope);
+      }
+
+      window.location.href = authUrl.toString();
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      localStorage.removeItem(storageKey);
+      sessionStorage.removeItem('xiaomi-oauth-state');
+      loadForm();
+    });
+
+    loadForm();
+  </script>
+</body>
+</html>

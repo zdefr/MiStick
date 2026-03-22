@@ -1,0 +1,127 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Xiaomi OAuth Callback</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #f6efe5;
+      color: #2f261a;
+    }
+    .wrap {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 24px;
+    }
+    .panel {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid #e8dcca;
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(84, 61, 31, 0.08);
+    }
+    pre {
+      overflow: auto;
+      padding: 16px;
+      border-radius: 14px;
+      background: #fff8ef;
+      border: 1px solid #eadbc6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .ok { color: #0f766e; }
+    .warn { color: #b45309; }
+    .err { color: #b91c1c; }
+    button {
+      appearance: none;
+      border: none;
+      border-radius: 999px;
+      padding: 12px 16px;
+      background: #d97706;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    code { background: #f3eadc; padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>Xiaomi OAuth Callback</h1>
+      <p>如果授权成功，这个页面会直接打印小米返回的 <code>access_token</code>。</p>
+      <p id="stateMsg"></p>
+      <pre id="output">解析中...</pre>
+      <div>
+        <button id="copyBtn" type="button">复制 access_token</button>
+        <button id="backBtn" type="button">返回首页</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function parseFragment(hash) {
+      const raw = (hash || '').replace(/^#/, '');
+      const params = new URLSearchParams(raw);
+      const result = {};
+      for (const [key, value] of params.entries()) {
+        result[key] = value;
+      }
+      return result;
+    }
+
+    const output = document.getElementById('output');
+    const stateMsg = document.getElementById('stateMsg');
+    const data = parseFragment(window.location.hash);
+    const expectedState = sessionStorage.getItem('xiaomi-oauth-state');
+
+    if (data.error) {
+      output.textContent = JSON.stringify(data, null, 2);
+      stateMsg.className = 'err';
+      stateMsg.textContent = '授权失败，请检查 error 和 error_description。';
+    } else if (data.access_token) {
+      const stateMatched = !expectedState || expectedState === data.state;
+      stateMsg.className = stateMatched ? 'ok' : 'warn';
+      stateMsg.textContent = stateMatched
+        ? 'state 校验通过，已拿到 access_token。'
+        : '已拿到 access_token，但 state 与本地记录不一致，请确认回调流程。';
+
+      const printable = {
+        access_token: data.access_token,
+        token_type: data.token_type,
+        expires_in: data.expires_in,
+        scope: data.scope,
+        mac_algorithm: data.mac_algorithm,
+        mac_key: data.mac_key,
+        state: data.state,
+        raw_fragment: window.location.hash,
+      };
+
+      console.log('xiaomi oauth callback', printable);
+      output.textContent = JSON.stringify(printable, null, 2);
+    } else {
+      output.textContent = '没有在 URL fragment 中解析到 access_token。\n请确认 redirect_uri 配置正确，并且本页是通过小米授权跳转进入。';
+      stateMsg.className = 'warn';
+      stateMsg.textContent = '当前没有检测到令牌。';
+    }
+
+    document.getElementById('copyBtn').addEventListener('click', async () => {
+      const token = data.access_token || '';
+      if (!token) {
+        alert('当前没有 access_token 可复制');
+        return;
+      }
+      await navigator.clipboard.writeText(token);
+      alert('access_token 已复制到剪贴板');
+    });
+
+    document.getElementById('backBtn').addEventListener('click', () => {
+      window.location.href = '/';
+    });
+  </script>
+</body>
+</html>

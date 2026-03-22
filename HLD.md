@@ -1,4 +1,4 @@
-﻿# 米家桌面便利贴 - 概要设计文档 (HLD)
+# 米家桌面便利贴 - 概要设计文档 (HLD)
 
 ## 1. 文档信息
 
@@ -441,7 +441,38 @@ CREATE INDEX idx_devices_type ON devices(type);
    - 接入 `python-miio` 做本地回退与状态查询
    - 补日志、错误追踪、服务健康检查和配置联动
 
-### 9.2 里程碑定义
+### 9.2 首期代码落地结构
+
+首期代码按“桌面壳 / 模块服务 / 共享契约”三层落地，当前建议目录如下：
+
+```text
+packages/
+└── desktop-app/
+    └── src/
+        ├── main/
+        │   ├── ipc/
+        │   ├── modules/
+        │   │   ├── config/
+        │   │   ├── mihome-session/
+        │   │   ├── device-sync/
+        │   │   └── device-control/
+        │   └── window/
+        ├── preload/
+        ├── renderer/
+        └── shared/
+            ├── config/
+            ├── contracts/
+            └── mihome/
+```
+
+当前约束如下：
+
+- `shared/` 只放跨进程共享的类型、Schema 和 IPC 契约，不放 Electron 运行时代码。
+- `main/modules/*` 每个模块都单独维护 `IO.md`，明确文件输入输出、进程内输入输出和 IPC 边界。
+- `renderer/` 不直接拼装桥接层请求，只消费 preload 暴露的白名单 API。
+- `main/ipc/` 只做通道注册和参数校验，不直接承载业务逻辑。
+- 桥接服务接入时优先实现各模块的 `Port` 接口，避免 `mijia-api` 或 `python-miio` 细节泄漏到 UI 与业务编排层。
+### 9.3 里程碑定义
 
 | 里程碑 | 通过标准 |
 |--------|----------|
@@ -451,7 +482,7 @@ CREATE INDEX idx_devices_type ON devices(type);
 | Milestone D | 至少一类真实设备可以通过云控成功开关 |
 | Milestone E | 云控失败时，部分设备可通过本地回退继续控制 |
 
-### 9.3 当前建议的首个开发模块
+### 9.4 当前建议的首个开发模块
 
 如果现在立刻开工，我建议先做 `M04 配置管理模块`，但不是孤立地做，而是和工程骨架一起做。
 

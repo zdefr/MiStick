@@ -1,0 +1,39 @@
+{
+    "name":  "@mijia/desktop-app",
+    "private":  true,
+    "version":  "0.1.0",
+    "description":  "Mijia Desktop Sticky desktop application",
+    "main":  "dist-electron/main/index.js",
+    "scripts":  {
+                    "dev":  "concurrently -k \"pnpm run dev:renderer\" \"pnpm run dev:main\" \"pnpm run dev:preload\" \"pnpm run dev:electron\"",
+                    "dev:renderer":  "vite",
+                    "dev:main":  "tsup src/main/index.ts --format cjs --target node20 --out-dir dist-electron/main --watch --external electron",
+                    "dev:preload":  "tsup src/preload/index.ts --format cjs --target node20 --out-dir dist-electron/preload --watch --external electron",
+                    "dev:electron":  "wait-on tcp:5173 file:dist-electron/main/index.js file:dist-electron/preload/index.js \u0026\u0026 electronmon dist-electron/main/index.js",
+                    "build":  "pnpm run build:renderer \u0026\u0026 pnpm run build:main \u0026\u0026 pnpm run build:preload",
+                    "build:renderer":  "vite build",
+                    "build:main":  "tsup src/main/index.ts --format cjs --target node20 --out-dir dist-electron/main --external electron",
+                    "build:preload":  "tsup src/preload/index.ts --format cjs --target node20 --out-dir dist-electron/preload --external electron",
+                    "typecheck":  "tsc --noEmit -p tsconfig.json \u0026\u0026 tsc --noEmit -p tsconfig.node.json"
+                },
+    "dependencies":  {
+                         "react":  "^18.3.1",
+                         "react-dom":  "^18.3.1",
+                         "zod":  "^3.24.2",
+                         "zustand":  "^5.0.3"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^24.0.0",
+                            "@types/react":  "^18.3.12",
+                            "@types/react-dom":  "^18.3.1",
+                            "@vitejs/plugin-react":  "^4.4.1",
+                            "concurrently":  "^9.1.2",
+                            "electron":  "28.3.3",
+                            "electronmon":  "^2.0.2",
+                            "tsup":  "^8.4.0",
+                            "typescript":  "^5.8.2",
+                            "vite":  "^6.2.2",
+                            "wait-on":  "^8.0.3"
+                        },
+    "productName":  "mijia-sticky"
+}
