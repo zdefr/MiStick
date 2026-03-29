@@ -1,0 +1,16 @@
+{
+    "name": "mijia",
+    "private": true,
+    "packageManager": "pnpm@10.32.1",
+    "scripts": {
+        "dev": "pnpm --filter @mijia/desktop-app dev",
+        "build": "pnpm --filter @mijia/desktop-app build",
+        "typecheck": "pnpm --filter @mijia/desktop-app typecheck"
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "electron",
+            "esbuild"
+        ]
+    }
+}
