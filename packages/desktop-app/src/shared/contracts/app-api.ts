@@ -29,6 +29,7 @@ export interface DeviceApi {
   syncFromCloud(force?: boolean): Promise<MiHomeDeviceSummary[]>;
   getStatus(deviceId: string): Promise<DeviceStatusSnapshot>;
   control(command: DeviceCommandRequest): Promise<DeviceCommandResult>;
+  setAlias(deviceId: string, alias: string | null): Promise<MiHomeDeviceSummary[]>;
 }
 
 export interface ConfigApi {

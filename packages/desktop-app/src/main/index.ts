@@ -9,7 +9,12 @@ import {
   HttpCloudControlPort,
   NoopLocalControlPort,
 } from './modules/device-control';
-import { DeviceSyncService, FileDeviceCachePort, HttpDeviceCloudSyncPort } from './modules/device-sync';
+import {
+  ConfigDeviceAliasPort,
+  DeviceSyncService,
+  FileDeviceCachePort,
+  HttpDeviceCloudSyncPort,
+} from './modules/device-sync';
 import { ConfigSessionPort, HttpMiHomeBridgeAuthPort, MiHomeSessionService } from './modules/mihome-session';
 import { createMainWindow } from './window/create-main-window';
 import { bindWindowStatePersistence } from './window/window-state';
@@ -110,6 +115,7 @@ async function bootstrap(): Promise<void> {
   const deviceSyncService = new DeviceSyncService(
     new HttpDeviceCloudSyncPort(bridgeClientOptions),
     deviceCachePort,
+    new ConfigDeviceAliasPort(configService),
   );
   const deviceControlService = new DeviceControlService(
     new CachedDeviceCapabilityPort(deviceCachePort),

@@ -1,6 +1,7 @@
 export type LoginStatus = 'idle' | 'pending' | 'success' | 'expired' | 'error';
 export type DeviceControlRoute = 'cloud' | 'local' | 'unavailable';
 export type DeviceControlAction = 'toggle' | 'turnOn' | 'turnOff' | 'refresh';
+export type DeviceNameSource = 'cloud' | 'alias';
 
 export interface MiHomeQrLoginTicket {
   ticketId: string;
@@ -31,11 +32,16 @@ export interface MiHomeDeviceCapability {
   supportsCloudControl: boolean;
   supportsLocalControl: boolean;
   preferredRoute: DeviceControlRoute;
+  supportedActions: DeviceControlAction[];
+  capabilityMessage?: string;
 }
 
 export interface MiHomeDeviceSummary {
   id: string;
   name: string;
+  originalName: string;
+  aliasName?: string;
+  nameSource: DeviceNameSource;
   model: string;
   homeId: string;
   roomId?: string;

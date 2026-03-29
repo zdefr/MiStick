@@ -66,6 +66,9 @@ class CloudDeviceDto(BaseModel):
     roomName: str | None = None
     online: bool | None = None
     specType: str | None = None
+    supportsCloudControl: bool = False
+    supportedActions: list[DeviceControlAction] = Field(default_factory=list)
+    capabilityMessage: str | None = None
     raw: dict[str, Any]
 
 

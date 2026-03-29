@@ -76,6 +76,17 @@ export function registerIpcHandlers({
 
   replaceHandler('device:getAll', async () => deviceSyncService.getCachedDevices());
   replaceHandler('device:syncFromCloud', async () => deviceSyncService.syncFromCloud());
+  replaceHandler('device:setAlias', async (_event, { deviceId, alias }) => {
+    if (typeof deviceId !== 'string' || deviceId.trim() === '') {
+      throw new Error('device:setAlias requires a non-empty deviceId');
+    }
+
+    if (alias !== null && typeof alias !== 'string') {
+      throw new Error('device:setAlias requires alias to be a string or null');
+    }
+
+    return deviceSyncService.setAlias(deviceId, alias);
+  });
   replaceHandler('device:getStatus', async (_event, { deviceId }) => {
     if (typeof deviceId !== 'string' || deviceId.trim() === '') {
       throw new Error('device:getStatus requires a non-empty deviceId');

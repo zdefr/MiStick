@@ -16,8 +16,8 @@ from pydantic import TypeAdapter
 from qrcode import QRCode
 
 from .models import (
-    CloudDeviceDto,
     CloudControlResponse,
+    CloudDeviceDto,
     DeviceStatusResponse,
     HomeDto,
     LoginPollResponse,
@@ -53,6 +53,7 @@ class MiHomeBridgeService:
         settings.runtime_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._login_tasks: dict[str, LoginTask] = {}
+        self._capability_probe_cache: dict[str, dict[str, Any]] = {}
 
     def get_session(self) -> SessionSnapshot:
         api = self._create_api()
@@ -139,7 +140,8 @@ class MiHomeBridgeService:
 
     def get_homes(self) -> list[HomeDto]:
         api = self._require_session()
-        homes = []
+        homes: list[HomeDto] = []
+
         for home in api.get_homes_list():
             homes.append(
                 HomeDto(
@@ -148,6 +150,7 @@ class MiHomeBridgeService:
                     uid=str(home.get('uid')) if home.get('uid') is not None else None,
                 )
             )
+
         return homes
 
     def get_rooms(self, home_id: str | None = None) -> list[RoomDto]:
@@ -163,6 +166,7 @@ class MiHomeBridgeService:
                 room_id = room.get('id') or room.get('room_id')
                 if room_id is None:
                     continue
+
                 rooms.append(
                     RoomDto(
                         id=str(room_id),
@@ -175,10 +179,7 @@ class MiHomeBridgeService:
 
     def get_devices(self, home_id: str | None = None) -> list[CloudDeviceDto]:
         api = self._require_session()
-        room_map = {
-            room.id: room.name
-            for room in self.get_rooms(home_id)
-        }
+        room_map = {room.id: room.name for room in self.get_rooms(home_id)}
         raw_devices = api.get_devices_list(home_id)
         devices: list[CloudDeviceDto] = []
 
@@ -187,6 +188,8 @@ class MiHomeBridgeService:
             did = raw_device.get('did')
             if did is None:
                 continue
+
+            capability = self._probe_cloud_capability(api, raw_device)
             devices.append(
                 CloudDeviceDto(
                     did=str(did),
@@ -197,6 +200,9 @@ class MiHomeBridgeService:
                     roomName=room_map.get(str(room_id)) if room_id is not None else None,
                     online=self._to_bool(raw_device.get('isOnline', raw_device.get('online'))),
                     specType=str(raw_device.get('spec_type')) if raw_device.get('spec_type') else None,
+                    supportsCloudControl=bool(capability['supportsCloudControl']),
+                    supportedActions=list(capability['supportedActions']),
+                    capabilityMessage=capability.get('capabilityMessage'),
                     raw=dict(raw_device),
                 )
             )
@@ -447,6 +453,41 @@ class MiHomeBridgeService:
         if region in {'cn', 'de', 'us'}:
             return region
         return 'cn'
+
+    def _probe_cloud_capability(self, api: mijiaAPI, raw_device: dict[str, Any]) -> dict[str, Any]:
+        model_key = str(raw_device.get('model') or '')
+        cached_capability = self._capability_probe_cache.get(model_key)
+        if cached_capability is not None:
+            return dict(cached_capability)
+
+        capability = {
+            'supportsCloudControl': False,
+            'supportedActions': [],
+            'capabilityMessage': '未探测到统一开关控制能力。',
+        }
+
+        did = raw_device.get('did')
+        if did is None:
+            capability['capabilityMessage'] = '设备缺少 did，无法进行能力探测。'
+            return capability
+
+        try:
+            device = mijiaDevice(api, did=str(did))
+            on_prop = device.prop_list.get('on')
+
+            if on_prop and 'w' in on_prop.rw:
+                capability['supportsCloudControl'] = True
+                capability['supportedActions'] = ['turnOn', 'turnOff', 'toggle']
+                capability['capabilityMessage'] = '已探测到可写 on 属性。'
+            elif on_prop:
+                capability['capabilityMessage'] = '已探测到 on 属性，但当前未开放写入权限。'
+            else:
+                capability['capabilityMessage'] = '未探测到可统一控制的 on 属性。'
+        except Exception as error:  # pragma: no cover - third-party runtime guard
+            capability['capabilityMessage'] = f'能力探测失败: {error}'
+
+        self._capability_probe_cache[model_key] = dict(capability)
+        return capability
 
     def _find_raw_device(self, api: mijiaAPI, device_id: str) -> dict[str, Any]:
         for device in api.get_devices_list():

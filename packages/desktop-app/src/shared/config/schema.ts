@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
 const isoDatetimeSchema = z.string().datetime({ offset: true });
+const deviceAliasRecordSchema = z.object({
+  alias: z.string().min(1),
+  applyWhenOriginalName: z.string().min(1).optional(),
+  source: z.enum(['seed', 'manual']),
+  note: z.string().min(1).optional(),
+  updatedAt: isoDatetimeSchema,
+});
 
 export const appConfigSchema = z.object({
   version: z.string().min(1),
@@ -42,6 +49,7 @@ export const appConfigSchema = z.object({
     autoRefresh: z.boolean(),
     refreshInterval: z.number().int().min(30).max(3600),
     lastSyncAt: isoDatetimeSchema.optional(),
+    aliases: z.record(z.string(), deviceAliasRecordSchema).default({}),
   }),
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),

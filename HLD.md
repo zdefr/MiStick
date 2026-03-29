@@ -35,8 +35,8 @@
 
 - 首期不再依赖小米官方个人开发者接入能力。
 - `mijia-api` 已通过本仓库 demo 验证：可完成扫码登录、会话复用、设备同步和基础云端控制。
-- `python-miio` 保留为本地控制补充路线，用于局域网低延迟控制或云控不可用时的回退。
-- 首期默认控制策略为“云端优先，本地回退”。
+- 本地回退控制方案已验证当前不可作为可实施路线，首期方案中移除 `python-miio` 与 Local Control Service。
+- 首期默认控制策略收束为“云端控制唯一正式路线”。
 
 ### 2.4 术语定义
 
@@ -46,8 +46,7 @@
 | LLD | Low-Level Design，详细设计 |
 | IPC | Electron 主进程与渲染进程之间的进程间通信 |
 | MiHome Bridge Service | 基于 `mijia-api` 的 Python/FastAPI 服务，负责扫码登录、会话复用、云端同步与云端控制 |
-| Local Control Service | 基于 `python-miio` 的 Python/FastAPI 服务，负责局域网设备控制与状态查询 |
-| Control Capability | 设备的可控能力描述，包含云控、本地控制及推荐路由 |
+| Control Capability | 设备的可控能力描述，包含云控可用性、支持动作与推荐路由 |
 
 ---
 
@@ -58,7 +57,7 @@
 构建一个运行在 Windows 桌面上的轻量级米家设备控制工具，具备：
 1. **扫码登录与会话复用** - 首次扫码登录，后续自动复用认证信息
 2. **云端设备同步能力** - 从米家云端同步家庭、房间和设备清单并缓存到本地
-3. **基础设备控制能力** - 优先通过云端控制已支持设备，必要时回退到本地控制
+3. **基础设备控制能力** - 通过云端控制已支持设备，并明确接受“已同步但暂不可控”的设备状态
 4. **便利贴形态 UI** - 桌面常驻、可置顶、拖拽、透明度可调
 
 ### 3.2 用户特征
@@ -73,13 +72,12 @@
 |--------|------|
 | Electron 28 + React 18 + TypeScript | 桌面端主技术栈 |
 | MiHome Bridge Service | 负责扫码登录、认证复用、设备同步与云控 |
-| Local Control Service | 负责 `python-miio` 本地控制能力 |
 | SQLite + JSON 文件 | 本地缓存、日志与配置持久化 |
 
 ### 3.4 范围约束
 
 - M01 负责扫码登录、认证状态复用、云端设备同步与缓存。
-- M02 负责控制路由决策，优先云控，必要时回退本地控制。
+- M02 负责云端状态查询与控制指令编排，不再承担本地回退路由。
 - M04 不直接管理 `mijia-api` 认证文件内容，只管理配置和认证文件路径元数据。
 - OpenClaw 相关模块不进入当前开发计划，也不进入当前 HLD 的接口和 UI 设计。
 
@@ -125,7 +123,6 @@
 | 表现层 | Renderer UI | 扫码登录、设备展示、用户交互、设置 |
 | 应用层 | Electron Main | IPC 聚合、窗口管理、业务编排、控制路由 |
 | 集成层 | MiHome Bridge Adapter | 扫码登录、会话管理、设备云端同步、云端控制 |
-| 集成层 | Local Control Adapter | 本地状态查询、本地控制指令执行 |
 | 持久化层 | Config / SQLite / Logs | 配置、设备缓存、日志 |
 
 ### 4.3 技术栈
@@ -139,7 +136,6 @@
 | 配置存储 | JSON 文件 | 用户可读可改的配置 |
 | 缓存/日志 | SQLite | 设备缓存、日志索引 |
 | 云端桥接 | Python + FastAPI + `mijia-api` | 扫码登录、会话复用、设备同步、云控 |
-| 本地控制 | Python + FastAPI + `python-miio` | 本地局域网控制补充能力 |
 
 ### 4.4 部署架构
 
@@ -154,10 +150,8 @@ Windows Host
 │   ├── devices.db
 │   ├── logs.db
 │   └── mihome-auth.json
-├── MiHome Bridge Service
-│   └── FastAPI + mijia-api
-└── Local Control Service (optional)
-    └── FastAPI + python-miio
+└── MiHome Bridge Service
+    └── FastAPI + mijia-api
 ```
 
 ---
@@ -169,7 +163,7 @@ Windows Host
 | 模块编号 | 模块名称 | 优先级 | 说明 |
 |----------|----------|--------|------|
 | M01 | 设备管理模块 | P0 | 扫码登录、会话复用、云端同步、设备缓存 |
-| M02 | 设备控制模块 | P0 | 云控优先、本地回退的状态查询与控制 |
+| M02 | 设备控制模块 | P0 | 云端状态查询与基础控制 |
 | M03 | UI 展示模块 | P0 | 便利贴窗口、扫码登录弹窗、设备卡片、设置界面 |
 | M04 | 配置管理模块 | P0 | 配置读写、认证路径元数据、备份恢复 |
 | M07 | 日志服务模块 | P1 | 应用日志与控制日志 |
@@ -192,7 +186,7 @@ Windows Host
         │                  │                 │
         ▼                  ▼                 ▼
 ┌──────────────┐   ┌────────────────┐   ┌──────────────┐
-│MiHome Bridge │   │本地控制适配层  │   │本地持久化层  │
+│MiHome Bridge │   │设备能力与控制层│   │本地持久化层  │
 └──────────────┘   └────────────────┘   └──────────────┘
 ```
 
@@ -206,7 +200,7 @@ Windows Host
 
 #### M02 - 设备控制模块
 - 查询设备状态
-- 按能力与优先级选择云控或本地控制路径
+- 按设备能力选择云端控制动作
 - 下发控制指令
 - 处理控制结果与错误反馈
 
@@ -258,18 +252,10 @@ Windows Host
 | `control` | cloudContext, action, payload | CommandResult |
 | `getStatus` | cloudContext | DeviceStatus |
 
-#### 6.2.2 Local Control Service
-
-| 能力 | 输入 | 输出 |
-|------|------|------|
-| `getStatus` | deviceId, localContext | DeviceStatus |
-| `control` | deviceId, action, payload, localContext | CommandResult |
-| `healthCheck` | - | boolean |
-
 ### 6.3 接口约束
 
-- M01 同步返回的是“统一设备元数据 + 能力描述”，不要求所有设备都具备完整本地控制上下文。
-- M02 默认优先走云端控制；仅当设备明确支持本地控制且云控不可用或不适配时，才回退到本地控制。
+- M01 同步返回的是“统一设备元数据 + 能力描述”，不要求所有设备都具备完整控制上下文。
+- M02 仅以云端控制为正式执行路径；若设备不支持统一云控，则在 UI 中展示为不可控。
 - 具体第三方接口签名由适配层实现细化，不直接在 HLD 中写死。
 
 ---
@@ -290,19 +276,13 @@ interface Device {
   online?: boolean;
   controlCapability: {
     cloud: boolean;
-    local: boolean;
-    preferred: 'cloud' | 'local' | 'none';
+    preferred: 'cloud' | 'none';
   };
   controlContext?: {
     cloud?: {
       did: string;
       props?: Record<string, { siid: number; piid: number }>;
       actions?: Record<string, { siid: number; aiid: number }>;
-    };
-    local?: {
-      ip?: string;
-      token?: string;
-      protocol?: string;
     };
   };
   status?: DeviceStatus;
@@ -328,11 +308,6 @@ interface UserConfig {
   };
   services: {
     mihomeBridge: {
-      baseUrl: string;
-      timeoutMs: number;
-    };
-    localControl: {
-      enabled: boolean;
       baseUrl: string;
       timeoutMs: number;
     };
@@ -390,9 +365,9 @@ CREATE INDEX idx_devices_type ON devices(type);
 | 项目 | 目标 |
 |------|------|
 | 单次设备同步 | 正常情况下 < 5 秒 |
-| 单次控制响应 | 云控正常情况下 < 3 秒，本地控制 < 2 秒 |
+| 单次控制响应 | 云控正常情况下 < 3 秒 |
 | 安全性 | 配置可编辑，认证文件与敏感登录态不明文外露 |
-| 可维护性 | 云端桥接与本地控制通过适配层解耦 |
+| 可维护性 | 云端桥接与桌面业务通过适配层解耦 |
 | 可扩展性 | 后续可追加更多控制适配器或替换桥接实现 |
 
 ---
@@ -403,8 +378,8 @@ CREATE INDEX idx_devices_type ON devices(type);
 |------|------|------|------|
 | Phase 1 | 工程脚手架 + M04 配置管理 | 1 周 | 可启动桌面应用、可读写配置 |
 | Phase 2 | M01 扫码登录与云端同步 | 1.5 周 | 可扫码登录、复用会话、同步设备列表 |
-| Phase 3 | M02 云控优先的基础控制 | 1.5 周 | 开关/亮度控制可用 |
-| Phase 4 | M02 本地回退能力 + M03 UI 完善 | 1.5 周 | 云控失败时可回退到本地控制 |
+| Phase 3 | M02 云端基础控制 | 1.5 周 | 开关/亮度控制可用 |
+| Phase 4 | M03 UI 完善 + 设置能力 | 1 周 | 设置入口、别名、状态反馈可用 |
 | Phase 5 | M07 日志服务 | 0.5 周 | 关键操作日志可查询 |
 
 **总计：** 6 周左右
@@ -417,7 +392,7 @@ CREATE INDEX idx_devices_type ON devices(type);
    - 搭 `packages/desktop-app`
    - 确认 Electron 窗口、preload、IPC 白名单、基础状态管理
    - 落 `config.json`、默认配置、备份恢复、服务地址配置
-   - 先把 mihomeBridge / localControl 的 URL、超时和 `authStoragePath` 固定下来
+   - 先把 mihomeBridge 的 URL、超时和 `authStoragePath` 固定下来
 
 2. 再做 MiHome Bridge Service 与 M01 最小闭环
    - 搭 `packages/mihome-bridge-service`
@@ -436,10 +411,9 @@ CREATE INDEX idx_devices_type ON devices(type);
    - 先实现 `turnOn` / `turnOff` / `setBrightness`
    - 这个阶段目标是“至少一批真实设备能被成功控制”
 
-5. 最后补 M02 的本地回退与 M07
-   - 搭 `packages/local-control-service`
-   - 接入 `python-miio` 做本地回退与状态查询
-   - 补日志、错误追踪、服务健康检查和配置联动
+5. 最后补 M07 与体验细节
+   - 补日志、错误追踪和服务健康检查
+   - 完善设置入口、设备别名和控制反馈
 
 ### 9.2 首期代码落地结构
 
@@ -471,7 +445,7 @@ packages/
 - `main/modules/*` 每个模块都单独维护 `IO.md`，明确文件输入输出、进程内输入输出和 IPC 边界。
 - `renderer/` 不直接拼装桥接层请求，只消费 preload 暴露的白名单 API。
 - `main/ipc/` 只做通道注册和参数校验，不直接承载业务逻辑。
-- 桥接服务接入时优先实现各模块的 `Port` 接口，避免 `mijia-api` 或 `python-miio` 细节泄漏到 UI 与业务编排层。
+- 桥接服务接入时优先实现各模块的 `Port` 接口，避免 `mijia-api` 细节泄漏到 UI 与业务编排层。
 ### 9.3 里程碑定义
 
 | 里程碑 | 通过标准 |
@@ -480,7 +454,7 @@ packages/
 | Milestone B | 可以扫码登录，并在重启后复用登录态 |
 | Milestone C | 可以同步家庭/房间/设备，并在 UI 中展示 |
 | Milestone D | 至少一类真实设备可以通过云控成功开关 |
-| Milestone E | 云控失败时，部分设备可通过本地回退继续控制 |
+| Milestone E | 设置、别名与关键日志能力可用 |
 
 ### 9.4 当前建议的首个开发模块
 
@@ -491,7 +465,7 @@ packages/
 - 风险低，适合先把项目结构、类型定义、IPC 约定、文件落盘路径统一下来。
 - 做完 M04 之后，M01 和 M02 都能直接接入，不会反复返工配置模型。
 
-做完 M04 后，下一跳就直接进入 `MiHome Bridge Service + M01`，不要先去做复杂 UI，也不要先做本地回退。
+做完 M04 后，下一跳就直接进入 `MiHome Bridge Service + M01`，不要先去做复杂 UI，也不要先扩展非云端控制路线。
 
 ---
 
@@ -502,7 +476,6 @@ packages/
 | `mijia-api` 稳定性变化 | 登录与同步能力依赖社区实现与米家接口变化 | 通过桥接服务封装并保留版本锁定、回归脚本 |
 | `mijia-api` 许可证风险 | GPL-3.0 对正式产品集成有影响 | 首期继续验证，正式发布前完成许可证决策 |
 | 设备能力映射不完整 | 某些设备只能同步，不能直接控制 | 允许展示但降级为不可控 |
-| 本地控制覆盖率有限 | 并非所有设备都支持 `python-miio` | 仅将其作为补充和回退方案 |
 | 配置与认证文件损坏 | 用户可手工编辑配置，认证文件可能失效 | 增加配置校验、认证重登和自动备份 |
 
 ---
@@ -514,6 +487,7 @@ packages/
 | v1.0 | 2026-03-17 | - | 初始版本 |
 | v1.1 | 2026-03-21 | - | 移除 OpenClaw 范围，明确首期为米家登录/云端同步/基础控制 |
 | v1.2 | 2026-03-21 | - | 基于 `mijia-api` 验证结果，收束为“云控优先、本地回退”路线 |
+| v1.3 | 2026-03-29 | - | 删除本地回退方案，首期正式路线收束为纯云控 |
 
 ---
 

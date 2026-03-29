@@ -39,6 +39,7 @@ export function createDefaultAppConfig(userDataDir: string): AppConfig {
     devices: {
       autoRefresh: true,
       refreshInterval: 300,
+      aliases: {},
     },
     logging: {
       level: 'info',

@@ -38,7 +38,7 @@ const STATUS_TONES: Record<LoginStatus, string> = {
 };
 
 const DEVICE_ACTION_LABELS: Record<'refresh' | 'turnOn' | 'turnOff', string> = {
-  refresh: '刷新状态',
+  refresh: '刷新中...',
   turnOn: '开启中...',
   turnOff: '关闭中...',
 };
@@ -96,7 +96,14 @@ function sortDevices(devices: MiHomeDeviceSummary[]): MiHomeDeviceSummary[] {
 }
 
 function canControlDevice(device: MiHomeDeviceSummary): boolean {
-  return device.capability.supportsCloudControl || device.capability.supportsLocalControl;
+  return (device.capability.supportedActions?.length ?? 0) > 0 || device.capability.supportsLocalControl;
+}
+
+function supportsDeviceAction(
+  device: MiHomeDeviceSummary,
+  action: Extract<DeviceControlAction, 'turnOn' | 'turnOff' | 'toggle'>,
+): boolean {
+  return device.capability.supportedActions?.includes(action) ?? false;
 }
 
 export function App() {
@@ -121,6 +128,9 @@ export function App() {
   const [deviceBusyMap, setDeviceBusyMap] = useState<Record<string, DeviceControlAction | 'refresh' | null>>({});
   const [deviceFeedbackMap, setDeviceFeedbackMap] = useState<Record<string, string>>({});
   const [deviceFeedbackToneMap, setDeviceFeedbackToneMap] = useState<Record<string, 'neutral' | 'success' | 'danger'>>({});
+  const [editingAliasDeviceId, setEditingAliasDeviceId] = useState<string | null>(null);
+  const [deviceAliasDraftMap, setDeviceAliasDraftMap] = useState<Record<string, string>>({});
+  const [deviceAliasBusyMap, setDeviceAliasBusyMap] = useState<Record<string, boolean>>({});
 
   const dragStateRef = useRef<DragState | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
@@ -174,7 +184,7 @@ export function App() {
 
   const heroDescription =
     session?.status === 'success'
-      ? '会话已可用，现在可以在这个窗口里直接刷新状态、同步设备并下发最小控制指令。'
+      ? '会话已可用，现在可以在这个窗口里直接刷新状态、同步设备，并基于真实探测结果控制设备。'
       : qrTicket
         ? '登录任务已创建，请使用米家 App 扫码完成授权。'
         : '当前已经接上 MiHome Bridge Service，下一步就是拉起扫码登录并同步设备。';
@@ -491,6 +501,72 @@ export function App() {
         setDeviceBusy(deviceId, null);
       }
     }
+  }
+
+  function handleStartAliasEdit(device: MiHomeDeviceSummary) {
+    setEditingAliasDeviceId(device.id);
+    setDeviceAliasDraftMap((current) => ({
+      ...current,
+      [device.id]: device.aliasName ?? '',
+    }));
+  }
+
+  function handleCancelAliasEdit(deviceId: string) {
+    setEditingAliasDeviceId((current) => (current === deviceId ? null : current));
+  }
+
+  function handleAliasDraftChange(deviceId: string, value: string) {
+    setDeviceAliasDraftMap((current) => ({
+      ...current,
+      [deviceId]: value,
+    }));
+  }
+
+  async function handleSaveAlias(device: MiHomeDeviceSummary, aliasOverride?: string | null) {
+    const draftAlias = aliasOverride ?? deviceAliasDraftMap[device.id] ?? '';
+    setDeviceAliasBusyMap((current) => ({
+      ...current,
+      [device.id]: true,
+    }));
+
+    try {
+      const updatedDevices = await window.mijia.device.setAlias(
+        device.id,
+        draftAlias.trim() === '' ? null : draftAlias.trim(),
+      );
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setDevices(sortDevices(updatedDevices));
+      setEditingAliasDeviceId((current) => (current === device.id ? null : current));
+      setDeviceFeedback(
+        device.id,
+        draftAlias.trim() === '' ? '已恢复显示云端原名。' : '本地别名已保存。',
+        'success',
+      );
+    } catch (aliasError) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setDeviceFeedback(device.id, normalizeErrorMessage(aliasError), 'danger');
+    } finally {
+      if (isMountedRef.current) {
+        setDeviceAliasBusyMap((current) => ({
+          ...current,
+          [device.id]: false,
+        }));
+      }
+    }
+  }
+
+  async function handleResetAlias(device: MiHomeDeviceSummary) {
+    setDeviceAliasDraftMap((current) => ({
+      ...current,
+      [device.id]: '',
+    }));
+    await handleSaveAlias(device, null);
   }
 
   function setDeviceBusy(deviceId: string, action: DeviceControlAction | 'refresh' | null) {
@@ -820,9 +896,19 @@ export function App() {
               {devices.map((device) => {
                 const status = deviceStatuses[device.id];
                 const busyAction = deviceBusyMap[device.id];
+                const aliasBusy = deviceAliasBusyMap[device.id] ?? false;
+                const aliasDraft = deviceAliasDraftMap[device.id] ?? device.aliasName ?? '';
+                const isEditingAlias = editingAliasDeviceId === device.id;
                 const feedback = deviceFeedbackMap[device.id];
                 const feedbackTone = deviceFeedbackToneMap[device.id] ?? 'neutral';
                 const controllable = canControlDevice(device);
+                const canTurnOn = supportsDeviceAction(device, 'turnOn');
+                const canTurnOff = supportsDeviceAction(device, 'turnOff');
+                const capabilityHint =
+                  device.capability.capabilityMessage ??
+                  (controllable
+                    ? '当前设备已进入 M02 最小控制范围。'
+                    : '当前设备暂未进入首期统一控制范围。');
 
                 return (
                   <article
@@ -833,8 +919,12 @@ export function App() {
                       <div>
                         <h3>{device.name}</h3>
                         <p>{device.model}</p>
+                        {device.nameSource === 'alias' ? (
+                          <p className="device-item__name-origin">原名：{device.originalName}</p>
+                        ) : null}
                       </div>
                       <div className="device-item__badges">
+                        {device.nameSource === 'alias' ? <span className="meta-chip">别名</span> : null}
                         <span
                           className={`status-pill status-pill--${
                             (status?.online ?? device.isOnline) ? 'success' : 'neutral'
@@ -856,6 +946,59 @@ export function App() {
                         </span>
                       </div>
                     </div>
+
+                    {isEditingAlias ? (
+                      <div className="device-item__alias-editor">
+                        <label className="device-item__alias-field">
+                          <span>本地别名</span>
+                          <input
+                            type="text"
+                            value={aliasDraft}
+                            onChange={(event) => {
+                              handleAliasDraftChange(device.id, event.target.value);
+                            }}
+                            placeholder={device.originalName}
+                            maxLength={40}
+                            disabled={aliasBusy}
+                          />
+                        </label>
+                        <p className="device-item__alias-help">
+                          展示优先级：改过的云端名 &gt; 本地别名 &gt; 原名
+                        </p>
+                        <div className="device-item__alias-actions">
+                          <button
+                            type="button"
+                            className="button button--secondary button--small"
+                            onClick={() => {
+                              void handleSaveAlias(device);
+                            }}
+                            disabled={aliasBusy}
+                          >
+                            {aliasBusy ? '保存中...' : '保存别名'}
+                          </button>
+                          <button
+                            type="button"
+                            className="button button--ghost button--small"
+                            onClick={() => {
+                              void handleResetAlias(device);
+                            }}
+                            disabled={aliasBusy}
+                          >
+                            恢复原名
+                          </button>
+                          <button
+                            type="button"
+                            className="button button--secondary button--small"
+                            onClick={() => {
+                              handleCancelAliasEdit(device.id);
+                            }}
+                            disabled={aliasBusy}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
 
                     <dl className="device-item__meta">
                       <div>
@@ -882,6 +1025,16 @@ export function App() {
                           type="button"
                           className="button button--secondary button--small"
                           onClick={() => {
+                            handleStartAliasEdit(device);
+                          }}
+                          disabled={busyAction != null || aliasBusy}
+                        >
+                          {device.aliasName ? '编辑别名' : '设置别名'}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--secondary button--small"
+                          onClick={() => {
                             void handleRefreshDeviceStatus(device.id);
                           }}
                           disabled={busyAction != null}
@@ -894,7 +1047,7 @@ export function App() {
                           onClick={() => {
                             void handleControlDevice(device.id, 'turnOn');
                           }}
-                          disabled={!controllable || busyAction != null}
+                          disabled={!canTurnOn || busyAction != null}
                         >
                           {busyAction === 'turnOn' ? DEVICE_ACTION_LABELS.turnOn : '开启'}
                         </button>
@@ -904,15 +1057,13 @@ export function App() {
                           onClick={() => {
                             void handleControlDevice(device.id, 'turnOff');
                           }}
-                          disabled={!controllable || busyAction != null}
+                          disabled={!canTurnOff || busyAction != null}
                         >
                           {busyAction === 'turnOff' ? DEVICE_ACTION_LABELS.turnOff : '关闭'}
                         </button>
                       </div>
                       <div className="device-item__hint-group">
-                        <p className="device-item__hint">
-                          {controllable ? '当前设备已进入 M02 最小控制范围。' : '当前设备暂未进入首期统一控制范围。'}
-                        </p>
+                        <p className="device-item__hint">{capabilityHint}</p>
                         {feedback ? (
                           <p className={`device-item__feedback device-item__feedback--${feedbackTone}`}>
                             {feedback}

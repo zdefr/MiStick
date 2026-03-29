@@ -14,9 +14,14 @@ export class CachedDeviceCapabilityPort implements DeviceCapabilityPort {
         supportsCloudControl: false,
         supportsLocalControl: false,
         preferredRoute: 'unavailable',
+        supportedActions: [],
+        capabilityMessage: '未找到设备缓存，暂时无法判断控制能力。',
       };
     }
 
-    return targetDevice.capability;
+    return {
+      ...targetDevice.capability,
+      supportedActions: targetDevice.capability.supportedActions ?? [],
+    };
   }
 }

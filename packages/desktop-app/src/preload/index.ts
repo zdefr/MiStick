@@ -20,6 +20,7 @@ const api: MijiaDesktopApi = {
     syncFromCloud: (force) => ipcRenderer.invoke('device:syncFromCloud', { force }),
     getStatus: (deviceId) => ipcRenderer.invoke('device:getStatus', { deviceId }),
     control: (command) => ipcRenderer.invoke('device:control', command),
+    setAlias: (deviceId, alias) => ipcRenderer.invoke('device:setAlias', { deviceId, alias }),
   },
   config: {
     load: () => ipcRenderer.invoke('config:load'),

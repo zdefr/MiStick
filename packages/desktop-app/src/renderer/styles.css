@@ -432,6 +432,10 @@ button {
   font-size: 13px;
 }
 
+.device-item__name-origin {
+  opacity: 0.82;
+}
+
 .device-item__badges {
   display: flex;
   gap: 8px;
@@ -442,6 +446,56 @@ button {
 .device-item__meta {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   margin-top: 14px;
+}
+
+.device-item__alias-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(77, 59, 18, 0.06);
+  border: 1px dashed rgba(98, 77, 26, 0.18);
+}
+
+.device-item__alias-field {
+  display: grid;
+  gap: 6px;
+}
+
+.device-item__alias-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #7b6534;
+}
+
+.device-item__alias-field input {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(98, 77, 26, 0.18);
+  background: rgba(255, 255, 255, 0.82);
+  color: #2a2417;
+  outline: none;
+}
+
+.device-item__alias-field input:focus {
+  border-color: rgba(138, 90, 31, 0.46);
+  box-shadow: 0 0 0 3px rgba(138, 90, 31, 0.12);
+}
+
+.device-item__alias-help {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b5728;
+}
+
+.device-item__alias-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .device-item__footer {

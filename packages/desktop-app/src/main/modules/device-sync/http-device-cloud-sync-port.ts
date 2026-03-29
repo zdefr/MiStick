@@ -25,6 +25,9 @@ interface BridgeDeviceDto {
   roomName?: string;
   online?: boolean;
   specType?: string;
+  supportsCloudControl?: boolean;
+  supportedActions?: Array<'toggle' | 'turnOn' | 'turnOff'>;
+  capabilityMessage?: string;
 }
 
 export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
@@ -36,7 +39,10 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
   }
 
   async getRooms(homeId: string): Promise<MiHomeRoomSummary[]> {
-    const rooms = await this.getJson<BridgeRoomDto[]>(`/api/cloud/rooms?homeId=${encodeURIComponent(homeId)}`);
+    const rooms = await this.getJson<BridgeRoomDto[]>(
+      `/api/cloud/rooms?homeId=${encodeURIComponent(homeId)}`,
+      this.getSyncTimeoutMs(),
+    );
     return rooms.map((room) => ({
       id: room.id,
       homeId: room.homeId,
@@ -47,13 +53,18 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
   async getDevices(homeId: string): Promise<MiHomeDeviceSummary[]> {
     const rooms = await this.getRooms(homeId);
     const roomMap = new Map(rooms.map((room) => [room.id, room.name]));
-    const devices = await this.getJson<BridgeDeviceDto[]>(`/api/cloud/devices?homeId=${encodeURIComponent(homeId)}`);
+    const devices = await this.getJson<BridgeDeviceDto[]>(
+      `/api/cloud/devices?homeId=${encodeURIComponent(homeId)}`,
+      this.getSyncTimeoutMs(),
+    );
 
     return devices.map((device) => {
-      const supportsCloudControl = inferCloudControlCapability(device);
+      const supportsCloudControl = device.supportsCloudControl ?? false;
       const summary: MiHomeDeviceSummary = {
         id: device.did,
         name: device.name,
+        originalName: device.name,
+        nameSource: 'cloud',
         model: device.model,
         homeId: device.homeId,
         isOnline: device.online ?? false,
@@ -61,11 +72,16 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
           supportsCloudControl,
           supportsLocalControl: false,
           preferredRoute: supportsCloudControl ? 'cloud' : 'unavailable',
+          supportedActions: device.supportedActions ?? [],
         },
         cloudContext: {
           did: device.did,
         },
       };
+
+      if (device.capabilityMessage) {
+        summary.capability.capabilityMessage = device.capabilityMessage;
+      }
 
       if (device.roomId) {
         summary.roomId = device.roomId;
@@ -79,9 +95,13 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
     });
   }
 
-  private async getJson<T>(url: string): Promise<T> {
+  private getSyncTimeoutMs(): number {
+    return Math.max(this.options.timeoutMs, 60000);
+  }
+
+  private async getJson<T>(url: string, timeoutMs = this.options.timeoutMs): Promise<T> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.options.timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(`${this.options.baseUrl}${url}`, {
@@ -95,19 +115,4 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
       clearTimeout(timeoutId);
     }
   }
-}
-
-function inferCloudControlCapability(device: BridgeDeviceDto): boolean {
-  const fingerprint = `${device.model} ${device.specType ?? ''}`.toLowerCase();
-  console.log(device)
-  const controllableKeywords = [
-    'outlet',
-    'plug',
-    'switch',
-    'light',
-    'lamp',
-    'night-light',
-  ];
-
-  return controllableKeywords.some((keyword) => fingerprint.includes(keyword));
 }
