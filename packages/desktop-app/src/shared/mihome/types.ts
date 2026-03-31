@@ -1,6 +1,13 @@
 export type LoginStatus = 'idle' | 'pending' | 'success' | 'expired' | 'error';
 export type DeviceControlRoute = 'cloud' | 'local' | 'unavailable';
-export type DeviceControlAction = 'toggle' | 'turnOn' | 'turnOff' | 'refresh';
+export type DeviceControlAction =
+  | 'toggle'
+  | 'turnOn'
+  | 'turnOff'
+  | 'refresh'
+  | 'setModeAuto'
+  | 'setModeSleep'
+  | 'setModeFavorite';
 export type DeviceNameSource = 'cloud' | 'alias';
 
 export interface MiHomeQrLoginTicket {
@@ -43,6 +50,7 @@ export interface MiHomeDeviceSummary {
   aliasName?: string;
   nameSource: DeviceNameSource;
   model: string;
+  iconUrl?: string;
   homeId: string;
   roomId?: string;
   roomName?: string;
@@ -66,6 +74,13 @@ export interface DeviceStatusSnapshot {
   online: boolean;
   updatedAt: string;
   route: DeviceControlRoute;
+  deviceClass?: 'airPurifier';
+  mode?: 'auto' | 'sleep' | 'favorite';
+  temperature?: number;
+  humidity?: number;
+  airQualityCode?: number;
+  airQualityLabel?: string;
+  pm25Density?: number;
   message?: string;
   raw?: Record<string, unknown>;
 }

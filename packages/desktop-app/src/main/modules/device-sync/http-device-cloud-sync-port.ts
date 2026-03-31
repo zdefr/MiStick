@@ -20,6 +20,7 @@ interface BridgeDeviceDto {
   did: string;
   name: string;
   model: string;
+  iconUrl?: string;
   homeId: string;
   roomId?: string;
   roomName?: string;
@@ -81,6 +82,10 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
 
       if (device.capabilityMessage) {
         summary.capability.capabilityMessage = device.capabilityMessage;
+      }
+
+      if (device.iconUrl) {
+        summary.iconUrl = device.iconUrl;
       }
 
       if (device.roomId) {

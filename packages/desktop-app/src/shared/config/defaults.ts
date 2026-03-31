@@ -28,7 +28,9 @@ export function createDefaultAppConfig(userDataDir: string): AppConfig {
       width: 400,
       height: 600,
       alwaysOnTop: true,
-      opacity: 0.9,
+      opacity: 1,
+      backgroundOpacity: 0.72,
+      interactionOpacity: 0.88,
       skipTaskbar: true,
     },
     appearance: {

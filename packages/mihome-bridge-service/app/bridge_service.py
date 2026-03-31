@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from typing import Any, Literal
 from urllib import parse
 
@@ -33,6 +34,8 @@ UTC = timezone.utc
 REGION = Literal['cn', 'de', 'us']
 SESSION_META_ADAPTER = TypeAdapter(dict[str, str])
 AUTH_KEYS = ['psecurity', 'nonce', 'ssecurity', 'passToken', 'userId', 'cUserId']
+DEVICE_ICON_CACHE_TTL = timedelta(days=7)
+DEVICE_ICON_PAGE_URL = 'https://home.miot-spec.com/s/{model}'
 
 
 @dataclass
@@ -51,6 +54,7 @@ class LoginTask:
 class MiHomeBridgeService:
     def __init__(self) -> None:
         settings.runtime_dir.mkdir(parents=True, exist_ok=True)
+        settings.device_icon_cache_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._login_tasks: dict[str, LoginTask] = {}
         self._capability_probe_cache: dict[str, dict[str, Any]] = {}
@@ -179,15 +183,18 @@ class MiHomeBridgeService:
 
     def get_devices(self, home_id: str | None = None) -> list[CloudDeviceDto]:
         api = self._require_session()
+        room_membership_map = self._build_room_membership_map(api, home_id)
         room_map = {room.id: room.name for room in self.get_rooms(home_id)}
         raw_devices = api.get_devices_list(home_id)
         devices: list[CloudDeviceDto] = []
 
         for raw_device in raw_devices:
-            room_id = raw_device.get('room_id') or raw_device.get('roomId')
             did = raw_device.get('did')
             if did is None:
                 continue
+
+            membership = room_membership_map.get(str(did))
+            room_id = membership['roomId'] if membership is not None else raw_device.get('room_id') or raw_device.get('roomId')
 
             capability = self._probe_cloud_capability(api, raw_device)
             devices.append(
@@ -195,9 +202,14 @@ class MiHomeBridgeService:
                     did=str(did),
                     name=str(raw_device.get('name') or raw_device.get('device_name') or '(unnamed-device)'),
                     model=str(raw_device.get('model') or '-'),
+                    iconUrl=self._resolve_device_icon_url(raw_device),
                     homeId=str(raw_device.get('home_id') or raw_device.get('homeId') or ''),
                     roomId=str(room_id) if room_id is not None else None,
-                    roomName=room_map.get(str(room_id)) if room_id is not None else None,
+                    roomName=(
+                        membership['roomName']
+                        if membership is not None
+                        else room_map.get(str(room_id)) if room_id is not None else None
+                    ),
                     online=self._to_bool(raw_device.get('isOnline', raw_device.get('online'))),
                     specType=str(raw_device.get('spec_type')) if raw_device.get('spec_type') else None,
                     supportsCloudControl=bool(capability['supportsCloudControl']),
@@ -208,6 +220,30 @@ class MiHomeBridgeService:
             )
 
         return devices
+
+    def _build_room_membership_map(
+        self, api: mijiaAPI, home_id: str | None = None
+    ) -> dict[str, dict[str, str]]:
+        membership_map: dict[str, dict[str, str]] = {}
+
+        for home in api.get_homes_list():
+            current_home_id = str(home.get('id', ''))
+            if home_id is not None and current_home_id != home_id:
+                continue
+
+            for room in home.get('roomlist', []) or []:
+                room_id = room.get('id') or room.get('room_id')
+                if room_id is None:
+                    continue
+
+                room_name = str(room.get('name') or room.get('room_name') or '(unnamed-room)')
+                for did in room.get('dids', []) or []:
+                    membership_map[str(did)] = {
+                        'roomId': str(room_id),
+                        'roomName': room_name,
+                    }
+
+        return membership_map
 
     def sync(self) -> SyncResponse:
         homes = self.get_homes()
@@ -240,7 +276,19 @@ class MiHomeBridgeService:
             if 'on' in device.prop_list:
                 status.power = bool(device.get('on'))
             else:
-                status.message = '当前设备未暴露 on 属性，暂不支持统一开关状态读取。'
+                status.message = '??????? on ????????????????'
+
+            if self._is_air_purifier(device.model):
+                status.deviceClass = 'airPurifier'
+                status.mode = self._read_air_purifier_mode(device)
+                status.temperature = self._read_numeric_prop(device, 'temperature', float)
+                humidity = self._read_numeric_prop(device, 'relative-humidity', int)
+                status.humidity = int(humidity) if humidity is not None else None
+                air_quality_code = self._read_numeric_prop(device, 'air-quality', int)
+                status.airQualityCode = int(air_quality_code) if air_quality_code is not None else None
+                status.airQualityLabel = self._resolve_air_quality_label(device, status.airQualityCode)
+                pm25_density = self._read_numeric_prop(device, 'pm2.5-density', int)
+                status.pm25Density = int(pm25_density) if pm25_density is not None else None
         except (ValueError, APIError) as error:
             status.message = str(error)
 
@@ -251,11 +299,11 @@ class MiHomeBridgeService:
         raw_device = self._find_raw_device(api, device_id)
         device = mijiaDevice(api, did=str(raw_device['did']))
 
-        if 'on' not in device.prop_list:
+        if action in {'turnOn', 'turnOff', 'toggle'} and 'on' not in device.prop_list:
             return CloudControlResponse(
                 deviceId=device_id,
                 success=False,
-                message='当前设备未暴露 on 属性，暂不支持统一开关控制。',
+                message='??????? on ??????????????',
             )
 
         if action == 'turnOn':
@@ -264,17 +312,146 @@ class MiHomeBridgeService:
             target_power = False
         elif action == 'toggle':
             target_power = not bool(device.get('on'))
+        elif action == 'setModeAuto':
+            if 'mode' not in device.prop_list:
+                raise ValueError('Device does not expose mode property.')
+            device.set('mode', 0)
+            target_power = None
+        elif action == 'setModeSleep':
+            if 'mode' not in device.prop_list:
+                raise ValueError('Device does not expose mode property.')
+            device.set('mode', 1)
+            target_power = None
+        elif action == 'setModeFavorite':
+            if 'mode' not in device.prop_list:
+                raise ValueError('Device does not expose mode property.')
+            device.set('mode', 2)
+            target_power = None
         else:
             raise ValueError(f'Unsupported action: {action}')
 
-        device.set('on', target_power)
+        if target_power is not None:
+            device.set('on', target_power)
         updated_status = self.get_device_status(device_id)
         return CloudControlResponse(
             deviceId=device_id,
             success=True,
-            message='云端控制指令已下发。',
+            message='??????????',
             updatedStatus=updated_status,
         )
+
+    def _resolve_device_icon_url(self, raw_device: dict[str, Any]) -> str | None:
+        model = str(raw_device.get('model') or '').strip()
+        if not model or model == '-':
+            return None
+
+        cached = self._read_device_icon_cache(model)
+        if cached is not None:
+            return cached.get('iconUrl') or None
+
+        try:
+            icon_url = self._fetch_device_icon_url(model)
+        except Exception:
+            icon_url = None
+        self._write_device_icon_cache(model, icon_url)
+        return icon_url
+
+    def _read_device_icon_cache(self, model: str) -> dict[str, Any] | None:
+        cache_path = settings.device_icon_cache_dir / f'{self._sanitize_cache_key(model)}.json'
+        if not cache_path.exists():
+            return None
+
+        try:
+            payload = json.loads(cache_path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        expires_at = payload.get('expiresAt')
+        if not expires_at or not self._is_future_iso(str(expires_at)):
+            return None
+
+        return payload
+
+    def _write_device_icon_cache(self, model: str, icon_url: str | None) -> None:
+        cache_path = settings.device_icon_cache_dir / f'{self._sanitize_cache_key(model)}.json'
+        now = datetime.now(UTC)
+        payload = {
+            'model': model,
+            'iconUrl': icon_url,
+            'fetchedAt': now.isoformat(),
+            'expiresAt': (now + DEVICE_ICON_CACHE_TTL).isoformat(),
+        }
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    def _fetch_device_icon_url(self, model: str) -> str | None:
+        response = requests.get(
+            DEVICE_ICON_PAGE_URL.format(model=parse.quote(model, safe='')),
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=20,
+        )
+        response.raise_for_status()
+
+        payload = self._extract_data_page(response.text)
+        entries = payload.get('props', {}).get('list', [])
+        if not isinstance(entries, list):
+            return None
+
+        exact_match = next(
+            (
+                item
+                for item in entries
+                if isinstance(item, dict) and str(item.get('model') or '').strip() == model
+            ),
+            None,
+        )
+        if exact_match is not None:
+            return self._extract_icon_url(exact_match)
+
+        fallback_entry = next((item for item in entries if isinstance(item, dict)), None)
+        if fallback_entry is not None:
+            return self._extract_icon_url(fallback_entry)
+
+        return None
+
+    @staticmethod
+    def _extract_data_page(html: str) -> dict[str, Any]:
+        marker = 'data-page="'
+        start = html.find(marker)
+        if start < 0:
+            return {}
+
+        start += len(marker)
+        end = html.find('">', start)
+        if end < 0:
+            return {}
+
+        try:
+            return json.loads(unescape(html[start:end]))
+        except json.JSONDecodeError:
+            return {}
+
+    @staticmethod
+    def _extract_icon_url(entry: dict[str, Any]) -> str | None:
+        icon_url = entry.get('icon_real')
+        if isinstance(icon_url, str) and icon_url.strip():
+            return icon_url.strip()
+        return None
+
+    @staticmethod
+    def _sanitize_cache_key(value: str) -> str:
+        return ''.join(char if char.isalnum() or char in '._-' else '_' for char in value)
+
+    @staticmethod
+    def _is_future_iso(value: str) -> bool:
+        try:
+            expires_at = datetime.fromisoformat(value)
+        except ValueError:
+            return False
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        return expires_at > datetime.now(UTC)
 
     def _create_api(self) -> mijiaAPI:
         return mijiaAPI(str(settings.auth_path))
@@ -463,33 +640,102 @@ class MiHomeBridgeService:
         capability = {
             'supportsCloudControl': False,
             'supportedActions': [],
-            'capabilityMessage': '未探测到统一开关控制能力。',
+            'capabilityMessage': '?????????????',
         }
 
         did = raw_device.get('did')
         if did is None:
-            capability['capabilityMessage'] = '设备缺少 did，无法进行能力探测。'
+            capability['capabilityMessage'] = '???? did??????????'
             return capability
 
         try:
             device = mijiaDevice(api, did=str(did))
             on_prop = device.prop_list.get('on')
+            mode_prop = device.prop_list.get('mode')
 
             if on_prop and 'w' in on_prop.rw:
                 capability['supportsCloudControl'] = True
                 capability['supportedActions'] = ['turnOn', 'turnOff', 'toggle']
-                capability['capabilityMessage'] = '已探测到可写 on 属性。'
+                capability['capabilityMessage'] = '?????? on ???'
             elif on_prop:
-                capability['capabilityMessage'] = '已探测到 on 属性，但当前未开放写入权限。'
+                capability['capabilityMessage'] = '???? on ??????????????'
             else:
-                capability['capabilityMessage'] = '未探测到可统一控制的 on 属性。'
+                capability['capabilityMessage'] = '?????????? on ???'
+
+            if self._is_air_purifier(device.model) and mode_prop and 'w' in mode_prop.rw:
+                capability['supportsCloudControl'] = True
+                capability['supportedActions'] = [
+                    *capability['supportedActions'],
+                    'setModeAuto',
+                    'setModeSleep',
+                    'setModeFavorite',
+                ]
+                if on_prop and 'w' in on_prop.rw:
+                    capability['capabilityMessage'] = '?????????????????'
+                else:
+                    capability['capabilityMessage'] = '??????????????'
         except Exception as error:  # pragma: no cover - third-party runtime guard
-            capability['capabilityMessage'] = f'能力探测失败: {error}'
+            capability['capabilityMessage'] = f'??????: {error}'
 
         self._capability_probe_cache[model_key] = dict(capability)
         return capability
 
+    @staticmethod
+    def _is_air_purifier(model: str | None) -> bool:
+        normalized = str(model or '').lower()
+        return normalized.startswith('zhimi.air')
+
+    @staticmethod
+    def _read_numeric_prop(
+        device: mijiaDevice, prop_name: str, value_type: type[int] | type[float]
+    ) -> int | float | None:
+        if prop_name not in device.prop_list:
+            return None
+
+        value = device.get(prop_name)
+        if value is None:
+            return None
+
+        try:
+            return value_type(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _read_air_purifier_mode(device: mijiaDevice) -> Literal['auto', 'sleep', 'favorite'] | None:
+        if 'mode' not in device.prop_list:
+            return None
+
+        try:
+            mode_value = int(device.get('mode'))
+        except (TypeError, ValueError):
+            return None
+
+        if mode_value == 0:
+            return 'auto'
+        if mode_value == 1:
+            return 'sleep'
+        if mode_value == 2:
+            return 'favorite'
+        return None
+
+    @staticmethod
+    def _resolve_air_quality_label(device: mijiaDevice, value: int | None) -> str | None:
+        if value is None:
+            return None
+
+        prop = device.prop_list.get('air-quality')
+        if prop is None or not prop.value_list:
+            return None
+
+        for item in prop.value_list:
+            if item.get('value') == value:
+                return str(item.get('desc_zh_cn') or item.get('description') or '').strip() or None
+
+        return None
+
     def _find_raw_device(self, api: mijiaAPI, device_id: str) -> dict[str, Any]:
+
         for device in api.get_devices_list():
             if str(device.get('did')) == device_id:
                 return dict(device)

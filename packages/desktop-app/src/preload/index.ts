@@ -4,10 +4,12 @@ import type { MijiaDesktopApi } from '../shared/contracts/app-api';
 const api: MijiaDesktopApi = {
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    quit: () => ipcRenderer.invoke('app:quit'),
   },
   window: {
     moveTo: (x, y) => ipcRenderer.invoke('window:moveTo', { x, y }),
     toggleAlwaysOnTop: () => ipcRenderer.invoke('window:toggleAlwaysOnTop'),
+    resetPosition: () => ipcRenderer.invoke('window:resetPosition'),
   },
   auth: {
     startQrLogin: (region) => ipcRenderer.invoke('auth:startQrLogin', { region }),

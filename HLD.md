@@ -24,12 +24,13 @@
 - 米家扫码登录与登录态保持
 - 从米家云端同步家庭、房间和设备信息
 - 便利贴形态的设备展示与基础控制
-- 本地配置、缓存与日志能力
+- 本地配置与设备缓存能力
 
 当前版本明确不包含：
 - OpenClaw 智能控制
 - 批处理脚本管理
 - 自然语言交互
+- 日志服务模块（M07，调整到二期）
 
 ### 2.3 当前技术路线结论
 
@@ -72,7 +73,7 @@
 |--------|------|
 | Electron 28 + React 18 + TypeScript | 桌面端主技术栈 |
 | MiHome Bridge Service | 负责扫码登录、认证复用、设备同步与云控 |
-| SQLite + JSON 文件 | 本地缓存、日志与配置持久化 |
+| SQLite + JSON 文件 | 本地缓存与配置持久化 |
 
 ### 3.4 范围约束
 
@@ -123,7 +124,7 @@
 | 表现层 | Renderer UI | 扫码登录、设备展示、用户交互、设置 |
 | 应用层 | Electron Main | IPC 聚合、窗口管理、业务编排、控制路由 |
 | 集成层 | MiHome Bridge Adapter | 扫码登录、会话管理、设备云端同步、云端控制 |
-| 持久化层 | Config / SQLite / Logs | 配置、设备缓存、日志 |
+| 持久化层 | Config / SQLite | 配置与设备缓存 |
 
 ### 4.3 技术栈
 
@@ -134,7 +135,7 @@
 | 状态管理 | Zustand | 轻量状态管理 |
 | 构建工具 | Vite + electron-builder | 构建与打包 |
 | 配置存储 | JSON 文件 | 用户可读可改的配置 |
-| 缓存/日志 | SQLite | 设备缓存、日志索引 |
+| 设备缓存 | SQLite | 设备缓存与同步结果索引 |
 | 云端桥接 | Python + FastAPI + `mijia-api` | 扫码登录、会话复用、设备同步、云控 |
 
 ### 4.4 部署架构
@@ -148,7 +149,7 @@ Windows Host
 ├── AppData
 │   ├── config.json
 │   ├── devices.db
-│   ├── logs.db
+│   ├── logs.db（二期规划）
 │   └── mihome-auth.json
 └── MiHome Bridge Service
     └── FastAPI + mijia-api
@@ -166,7 +167,7 @@ Windows Host
 | M02 | 设备控制模块 | P0 | 云端状态查询与基础控制 |
 | M03 | UI 展示模块 | P0 | 便利贴窗口、扫码登录弹窗、设备卡片、设置界面 |
 | M04 | 配置管理模块 | P0 | 配置读写、认证路径元数据、备份恢复 |
-| M07 | 日志服务模块 | P1 | 应用日志与控制日志 |
+| M07 | 日志服务模块 | P2 | 二期规划，负责应用日志与控制日志 |
 
 ### 5.2 模块关系
 
@@ -217,8 +218,8 @@ Windows Host
 - 为其他模块提供配置访问接口
 
 #### M07 - 日志服务模块
-- 记录应用日志与控制日志
-- 支持错误追踪与导出
+- 调整为二期模块，不纳入当前首期开工范围
+- 二期再补应用日志、控制日志与错误追踪能力
 
 ---
 
@@ -331,7 +332,7 @@ interface UserConfig {
 | 用户配置 | JSON 文件 | `%APPDATA%/mijia-sticky/config.json` |
 | 米家认证文件 | JSON 文件 | `%APPDATA%/mijia-sticky/mihome-auth.json` |
 | 设备缓存 | SQLite | `%APPDATA%/mijia-sticky/devices.db` |
-| 日志数据 | SQLite | `%APPDATA%/mijia-sticky/logs.db` |
+| 日志数据 | SQLite | `%APPDATA%/mijia-sticky/logs.db`（二期规划） |
 
 ### 7.3 设备缓存表结构
 
@@ -380,9 +381,9 @@ CREATE INDEX idx_devices_type ON devices(type);
 | Phase 2 | M01 扫码登录与云端同步 | 1.5 周 | 可扫码登录、复用会话、同步设备列表 |
 | Phase 3 | M02 云端基础控制 | 1.5 周 | 开关/亮度控制可用 |
 | Phase 4 | M03 UI 完善 + 设置能力 | 1 周 | 设置入口、别名、状态反馈可用 |
-| Phase 5 | M07 日志服务 | 0.5 周 | 关键操作日志可查询 |
+| Phase 5 | 二期规划（M07 日志服务） | 待定 | 日志查询与导出能力后置到二期 |
 
-**总计：** 6 周左右
+**首期总计：** 5.5 周左右（不含二期日志模块）
 
 ### 9.1 建议实施顺序
 
@@ -411,9 +412,9 @@ CREATE INDEX idx_devices_type ON devices(type);
    - 先实现 `turnOn` / `turnOff` / `setBrightness`
    - 这个阶段目标是“至少一批真实设备能被成功控制”
 
-5. 最后补 M07 与体验细节
-   - 补日志、错误追踪和服务健康检查
+5. 最后补体验细节
    - 完善设置入口、设备别名和控制反馈
+   - 服务健康检查与错误提示继续收口
 
 ### 9.2 首期代码落地结构
 
@@ -454,7 +455,7 @@ packages/
 | Milestone B | 可以扫码登录，并在重启后复用登录态 |
 | Milestone C | 可以同步家庭/房间/设备，并在 UI 中展示 |
 | Milestone D | 至少一类真实设备可以通过云控成功开关 |
-| Milestone E | 设置、别名与关键日志能力可用 |
+| Milestone E | 设置、别名与关键控制反馈能力可用 |
 
 ### 9.4 当前建议的首个开发模块
 

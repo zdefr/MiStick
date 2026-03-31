@@ -37,7 +37,9 @@ export const appConfigSchema = z.object({
     x: z.number().int().optional(),
     y: z.number().int().optional(),
     alwaysOnTop: z.boolean(),
-    opacity: z.number().min(0.1).max(1),
+    opacity: z.number().min(0.1).max(1).default(1),
+    backgroundOpacity: z.number().min(0.2).max(1).default(0.72),
+    interactionOpacity: z.number().min(0.2).max(1).default(0.88),
     skipTaskbar: z.boolean(),
   }),
   appearance: z.object({

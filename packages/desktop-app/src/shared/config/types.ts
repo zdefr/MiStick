@@ -41,6 +41,8 @@ export interface AppConfig {
     y?: number;
     alwaysOnTop: boolean;
     opacity: number;
+    backgroundOpacity: number;
+    interactionOpacity: number;
     skipTaskbar: boolean;
   };
   appearance: {

@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 LoginStatus = Literal['idle', 'pending', 'success', 'expired', 'failed']
-DeviceControlAction = Literal['toggle', 'turnOn', 'turnOff']
+DeviceControlAction = Literal['toggle', 'turnOn', 'turnOff', 'setModeAuto', 'setModeSleep', 'setModeFavorite']
 
 
 class HealthResponse(BaseModel):
@@ -61,6 +61,7 @@ class CloudDeviceDto(BaseModel):
     did: str
     name: str
     model: str
+    iconUrl: str | None = None
     homeId: str
     roomId: str | None = None
     roomName: str | None = None
@@ -90,6 +91,13 @@ class DeviceStatusResponse(BaseModel):
     updatedAt: str
     route: Literal['cloud'] = 'cloud'
     power: bool | None = None
+    deviceClass: Literal['airPurifier'] | None = None
+    mode: Literal['auto', 'sleep', 'favorite'] | None = None
+    temperature: float | None = None
+    humidity: int | None = None
+    airQualityCode: int | None = None
+    airQualityLabel: str | None = None
+    pm25Density: int | None = None
     message: str | None = None
     raw: dict[str, Any] | None = None
 

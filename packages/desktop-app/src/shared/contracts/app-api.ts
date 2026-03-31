@@ -10,11 +10,13 @@ import type {
 
 export interface AppApi {
   getVersion(): Promise<string>;
+  quit(): Promise<void>;
 }
 
 export interface WindowApi {
   moveTo(x: number, y: number): Promise<void>;
   toggleAlwaysOnTop(): Promise<boolean>;
+  resetPosition(): Promise<void>;
 }
 
 export interface AuthApi {

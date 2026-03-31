@@ -4,7 +4,7 @@ import type { DeviceControlService } from '../modules/device-control';
 import type { DeviceSyncService } from '../modules/device-sync';
 import type { MiHomeSessionService } from '../modules/mihome-session';
 import { applyWindowConfig } from '../window/apply-window-config';
-import { resolveSnappedWindowPosition } from '../window/window-state';
+import { resolveInitialWindowBounds, resolveSnappedWindowPosition } from '../window/window-state';
 
 interface IpcServices {
   configService: ConfigService;
@@ -25,6 +25,11 @@ export function registerIpcHandlers({
   deviceSyncService,
 }: IpcServices): void {
   replaceHandler('app:getVersion', () => app.getVersion());
+  replaceHandler('app:quit', async () => {
+    setTimeout(() => {
+      app.quit();
+    }, 0);
+  });
 
   replaceHandler('window:moveTo', async (event, { x, y }) => {
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
@@ -53,6 +58,33 @@ export function registerIpcHandlers({
     targetWindow.setAlwaysOnTop(nextAlwaysOnTop);
     await configService.setByPath('window.alwaysOnTop', nextAlwaysOnTop);
     return nextAlwaysOnTop;
+  });
+
+  replaceHandler('window:resetPosition', async (event) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!targetWindow) {
+      throw new Error('window:resetPosition target window not found');
+    }
+
+    const currentConfig = await configService.load();
+    const resetBounds = resolveInitialWindowBounds({
+      ...currentConfig,
+      window: {
+        ...(() => {
+          const { x: _x, y: _y, ...windowConfig } = currentConfig.window;
+          return windowConfig;
+        })(),
+      },
+    });
+
+    targetWindow.setPosition(resetBounds.x, resetBounds.y);
+    await configService.save({
+      window: {
+        ...currentConfig.window,
+        x: resetBounds.x,
+        y: resetBounds.y,
+      },
+    });
   });
 
   replaceHandler('auth:startQrLogin', async (_event, { region }) => {

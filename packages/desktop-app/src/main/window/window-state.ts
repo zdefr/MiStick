@@ -100,6 +100,8 @@ export function bindWindowStatePersistence(
         y: bounds.y,
         alwaysOnTop: window.isAlwaysOnTop(),
         opacity: window.getOpacity(),
+        backgroundOpacity: currentConfig.window.backgroundOpacity,
+        interactionOpacity: currentConfig.window.interactionOpacity,
         skipTaskbar: currentConfig.window.skipTaskbar,
       },
     });

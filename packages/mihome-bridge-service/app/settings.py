@@ -18,6 +18,7 @@ class Settings:
         self.runtime_dir = runtime_dir
         self.auth_path = auth_path
         self.meta_path = runtime_dir / 'session-meta.json'
+        self.device_icon_cache_dir = runtime_dir / 'device-icon-cache'
 
 
 settings = Settings()
