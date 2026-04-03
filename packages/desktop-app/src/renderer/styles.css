@@ -362,6 +362,13 @@ button {
   justify-content: space-between;
 }
 
+.device-card__leading {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .device-card__icon {
   width: 30px;
   height: 30px;
@@ -401,6 +408,46 @@ button {
 .device-card__icon--camera,
 .device-card__icon--generic {
   background: linear-gradient(180deg, rgba(194, 214, 255, 0.52), rgba(118, 155, 235, 0.28));
+}
+
+.device-favorite-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: rgba(223, 227, 233, 0.88);
+  color: rgba(124, 132, 145, 0.92);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms ease, opacity 140ms ease;
+}
+
+.device-favorite-button:hover {
+  background: rgba(213, 217, 224, 0.96);
+  transform: translateY(-1px);
+}
+
+.device-favorite-button:disabled,
+.device-favorite-button--busy {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.device-favorite-button--active {
+  background: rgba(255, 226, 122, 0.32);
+  color: rgba(223, 172, 21, 0.96);
+}
+
+.device-favorite-button__icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+}
+
+.device-favorite-button__icon--filled {
+  fill: currentColor;
 }
 
 .device-card__content {

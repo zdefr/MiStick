@@ -52,6 +52,7 @@ export const appConfigSchema = z.object({
     refreshInterval: z.number().int().min(30).max(3600),
     lastSyncAt: isoDatetimeSchema.optional(),
     aliases: z.record(z.string(), deviceAliasRecordSchema).default({}),
+    favorites: z.array(z.string().min(1)).default([]),
   }),
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),

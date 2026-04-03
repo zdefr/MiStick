@@ -32,6 +32,7 @@ export interface DeviceApi {
   getStatus(deviceId: string): Promise<DeviceStatusSnapshot>;
   control(command: DeviceCommandRequest): Promise<DeviceCommandResult>;
   setAlias(deviceId: string, alias: string | null): Promise<MiHomeDeviceSummary[]>;
+  setFavorite(deviceId: string, isFavorite: boolean): Promise<MiHomeDeviceSummary[]>;
 }
 
 export interface ConfigApi {

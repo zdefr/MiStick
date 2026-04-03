@@ -23,6 +23,7 @@ const api: MijiaDesktopApi = {
     getStatus: (deviceId) => ipcRenderer.invoke('device:getStatus', { deviceId }),
     control: (command) => ipcRenderer.invoke('device:control', command),
     setAlias: (deviceId, alias) => ipcRenderer.invoke('device:setAlias', { deviceId, alias }),
+    setFavorite: (deviceId, isFavorite) => ipcRenderer.invoke('device:setFavorite', { deviceId, isFavorite }),
   },
   config: {
     load: () => ipcRenderer.invoke('config:load'),

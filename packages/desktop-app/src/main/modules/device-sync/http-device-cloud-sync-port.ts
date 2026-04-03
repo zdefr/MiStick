@@ -101,7 +101,7 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
   }
 
   private getSyncTimeoutMs(): number {
-    return Math.max(this.options.timeoutMs, 60000);
+    return Math.max(this.options.timeoutMs, 120000);
   }
 
   private async getJson<T>(url: string, timeoutMs = this.options.timeoutMs): Promise<T> {

@@ -17,3 +17,8 @@ export interface DeviceAliasPort {
   seedAliases(devices: MiHomeDeviceSummary[]): Promise<Record<string, DeviceAliasRecord>>;
   setAlias(deviceId: string, alias: string | null, originalName: string): Promise<Record<string, DeviceAliasRecord>>;
 }
+
+export interface DeviceFavoritePort {
+  getFavoriteDeviceIds(): Promise<string[]>;
+  setFavorite(deviceId: string, isFavorite: boolean): Promise<string[]>;
+}

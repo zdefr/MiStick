@@ -11,6 +11,7 @@ import {
 } from './modules/device-control';
 import {
   ConfigDeviceAliasPort,
+  ConfigDeviceFavoritePort,
   DeviceSyncService,
   FileDeviceCachePort,
   HttpDeviceCloudSyncPort,
@@ -116,6 +117,7 @@ async function bootstrap(): Promise<void> {
     new HttpDeviceCloudSyncPort(bridgeClientOptions),
     deviceCachePort,
     new ConfigDeviceAliasPort(configService),
+    new ConfigDeviceFavoritePort(configService),
   );
   const deviceControlService = new DeviceControlService(
     new CachedDeviceCapabilityPort(deviceCachePort),

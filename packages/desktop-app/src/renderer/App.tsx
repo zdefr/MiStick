@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { LogOut, Pin, RefreshCw, ScanLine, Settings, UserRound } from 'lucide-react';
+import { LogOut, Pin, RefreshCw, ScanLine, Settings, Star, UserRound } from 'lucide-react';
 import type { AppConfig } from '../shared/config/types';
 import type {
   DeviceControlAction,
@@ -16,6 +16,10 @@ const LONG_PRESS_TICK_MS = 100;
 const HINT_RESET_DELAY_MS = 1200;
 const LOGIN_POLL_INTERVAL_MS = 2000;
 const ENVIRONMENT_DEVICE_STATUS_REFRESH_INTERVAL_MS = 20000;
+const ALL_ROOMS_TAB_ID = '__all_rooms__';
+const FAVORITES_TAB_ID = '__favorite_rooms__';
+const ALL_ROOMS_LABEL = '全部';
+const FAVORITES_LABEL = '我的关注';
 
 const DEFAULT_DRAG_HINT = '长按底部横条 2 秒后拖动窗口';
 const DRAG_HOLDING_HINT = '继续按住，进度填满后开始拖动';
@@ -65,6 +69,13 @@ interface FloatingAlertMessage {
   key: string;
   tone: 'danger' | 'warning';
   message: string;
+}
+
+interface RoomTab {
+  id: string;
+  label: string;
+  kind: 'all' | 'favorites' | 'room';
+  roomName?: string;
 }
 
 function resolveRegion(input?: string): 'cn' | 'de' | 'us' {
@@ -206,7 +217,7 @@ function getAirPurifierModeLabel(mode?: DeviceStatusSnapshot['mode']): string {
   }
 }
 
-function buildRoomTabs(devices: MiHomeDeviceSummary[]): string[] {
+function buildRoomTabs(devices: MiHomeDeviceSummary[]): RoomTab[] {
   const roomNames = new Set<string>();
 
   for (const device of devices) {
@@ -215,7 +226,18 @@ function buildRoomTabs(devices: MiHomeDeviceSummary[]): string[] {
     }
   }
 
-  return ['全屋', ...Array.from(roomNames).sort((left, right) => left.localeCompare(right, 'zh-CN'))];
+  return [
+    { id: ALL_ROOMS_TAB_ID, label: ALL_ROOMS_LABEL, kind: 'all' },
+    { id: FAVORITES_TAB_ID, label: FAVORITES_LABEL, kind: 'favorites' },
+    ...Array.from(roomNames)
+      .sort((left, right) => left.localeCompare(right, 'zh-CN'))
+      .map((roomName) => ({
+        id: `room:${roomName}`,
+        label: roomName,
+        kind: 'room' as const,
+        roomName,
+      })),
+  ];
 }
 
 function getDeviceSearchText(device: MiHomeDeviceSummary): string {
@@ -353,7 +375,7 @@ export function App() {
   const [isSyncingDevices, setIsSyncingDevices] = useState<boolean>(false);
   const [isQuittingApp, setIsQuittingApp] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
-  const [selectedRoom, setSelectedRoom] = useState<string>('全屋');
+  const [selectedRoomTabId, setSelectedRoomTabId] = useState<string>(FAVORITES_TAB_ID);
   const [deviceStatuses, setDeviceStatuses] = useState<Record<string, DeviceStatusSnapshot>>({});
   const [deviceBusyMap, setDeviceBusyMap] = useState<Record<string, DeviceControlAction | 'refresh' | null>>({});
   const [deviceFeedbackMap, setDeviceFeedbackMap] = useState<Record<string, string>>({});
@@ -361,6 +383,7 @@ export function App() {
     {},
   );
   const [deviceIconErrorMap, setDeviceIconErrorMap] = useState<Record<string, boolean>>({});
+  const [favoriteBusyMap, setFavoriteBusyMap] = useState<Record<string, boolean>>({});
 
   const dragStateRef = useRef<DragState | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
@@ -412,12 +435,16 @@ export function App() {
   }, [config]);
 
   const roomTabs = useMemo(() => buildRoomTabs(devices), [devices]);
+  const selectedRoomTab = useMemo(
+    () => roomTabs.find((roomTab) => roomTab.id === selectedRoomTabId) ?? roomTabs[0],
+    [roomTabs, selectedRoomTabId],
+  );
 
   useEffect(() => {
-    if (!roomTabs.includes(selectedRoom)) {
-      setSelectedRoom('全屋');
+    if (!roomTabs.some((roomTab) => roomTab.id === selectedRoomTabId)) {
+      setSelectedRoomTabId(FAVORITES_TAB_ID);
     }
-  }, [roomTabs, selectedRoom]);
+  }, [roomTabs, selectedRoomTabId]);
 
   useEffect(() => {
     setDeviceIconErrorMap({});
@@ -432,13 +459,22 @@ export function App() {
   }, [deviceStatuses]);
 
   const visibleDevices = useMemo(() => {
-    const filtered =
-      selectedRoom === '全屋'
-        ? devices
-        : devices.filter((device) => (device.roomName ?? '未分配房间') === selectedRoom);
+    let filtered = devices;
+
+    if (selectedRoomTab?.kind === 'favorites') {
+      filtered = devices.filter((device) => device.isFavorite === true);
+    } else if (selectedRoomTab?.kind === 'room' && selectedRoomTab.roomName) {
+      filtered = devices.filter((device) => (device.roomName ?? '未分配房间') === selectedRoomTab.roomName);
+    }
 
     return sortDashboardDevices(filtered);
-  }, [devices, selectedRoom]);
+  }, [devices, selectedRoomTab]);
+
+  const emptyStateTitle = selectedRoomTab?.kind === 'favorites' ? '我的关注里还没有设备' : '当前筛选房间还没有设备';
+  const emptyStateDescription =
+    selectedRoomTab?.kind === 'favorites'
+      ? '点击设备图标右侧的星标，就可以把设备加入这里。'
+      : '切换房间标签，或者点击右上角同步按钮刷新设备列表。';
 
   useEffect(() => {
     clearAutoRefreshTimer();
@@ -926,6 +962,40 @@ export function App() {
     await handleControlDevice(device.id, nextAction);
   }
 
+  async function handleToggleFavorite(device: MiHomeDeviceSummary) {
+    if (favoriteBusyMap[device.id]) {
+      return;
+    }
+
+    setFavoriteBusyMap((current) => ({
+      ...current,
+      [device.id]: true,
+    }));
+    setDeviceError(null);
+
+    try {
+      const updatedDevices = await window.mijia.device.setFavorite(device.id, device.isFavorite !== true);
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setDevices(sortDashboardDevices(updatedDevices));
+    } catch (favoriteError) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setDeviceError(normalizeErrorMessage(favoriteError));
+    } finally {
+      if (isMountedRef.current) {
+        setFavoriteBusyMap((current) => ({
+          ...current,
+          [device.id]: false,
+        }));
+      }
+    }
+  }
+
   function setDeviceBusy(deviceId: string, action: DeviceControlAction | 'refresh' | null) {
     setDeviceBusyMap((current) => ({
       ...current,
@@ -998,8 +1068,58 @@ export function App() {
     setDeviceBusyMap({});
     setDeviceFeedbackMap({});
     setDeviceFeedbackToneMap({});
+    setFavoriteBusyMap({});
     deviceStatusesRef.current = {};
     lastDeviceStatusRefreshAtRef.current = {};
+  }
+
+  function renderDeviceLeading(
+    device: MiHomeDeviceSummary,
+    tone: DeviceTone,
+    glyph: string,
+    iconUrl?: string,
+  ) {
+    const isFavorite = device.isFavorite === true;
+    const isFavoriteBusy = favoriteBusyMap[device.id] === true;
+    const favoriteActionLabel = isFavorite ? '移出我的关注' : '加入我的关注';
+
+    return (
+      <div className="device-card__leading">
+        <span className={`device-card__icon device-card__icon--${tone}`}>
+          {iconUrl ? (
+            <img
+              className="device-card__icon-image"
+              src={iconUrl}
+              alt=""
+              loading="lazy"
+              onError={() => {
+                setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
+              }}
+            />
+          ) : (
+            glyph
+          )}
+        </span>
+
+        <button
+          type="button"
+          className={`device-favorite-button${isFavorite ? ' device-favorite-button--active' : ''}${
+            isFavoriteBusy ? ' device-favorite-button--busy' : ''
+          }`}
+          onClick={() => {
+            void handleToggleFavorite(device);
+          }}
+          disabled={isFavoriteBusy}
+          title={favoriteActionLabel}
+          aria-label={favoriteActionLabel}
+        >
+          <Star
+            className={`device-favorite-button__icon${isFavorite ? ' device-favorite-button__icon--filled' : ''}`}
+            strokeWidth={2.2}
+          />
+        </button>
+      </div>
+    );
   }
 
   function scheduleLoginPoll(ticketId: string) {
@@ -1233,16 +1353,16 @@ export function App() {
           <>
             <header className="sticky-window__header">
               <div className="room-tabs" role="tablist" aria-label="房间切换">
-                {roomTabs.map((room) => (
+                {roomTabs.map((roomTab) => (
                   <button
-                    key={room}
+                    key={roomTab.id}
                     type="button"
-                    className={`room-tab${selectedRoom === room ? ' room-tab--active' : ''}`}
+                    className={`room-tab${selectedRoomTabId === roomTab.id ? ' room-tab--active' : ''}`}
                     onClick={() => {
-                      setSelectedRoom(room);
+                      setSelectedRoomTabId(roomTab.id);
                     }}
                   >
-                    {room}
+                    {roomTab.label}
                   </button>
                 ))}
               </div>
@@ -1320,21 +1440,7 @@ export function App() {
                         <>
                           <div className="device-card__summary">
                             <div className="device-card__top">
-                              <span className={`device-card__icon device-card__icon--${tone}`}>
-                                {iconUrl ? (
-                                  <img
-                                    className="device-card__icon-image"
-                                    src={iconUrl}
-                                    alt=""
-                                    loading="lazy"
-                                    onError={() => {
-                                      setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
-                                    }}
-                                  />
-                                ) : (
-                                  glyph
-                                )}
-                              </span>
+                              {renderDeviceLeading(device, tone, glyph, iconUrl)}
 
                               {isControllable ? (
                                 <button
@@ -1427,21 +1533,7 @@ export function App() {
                           {showSocketPower && socketPowerLabel ? (
                             <div className="device-card__summary device-card__summary--socket">
                               <div className="device-card__top">
-                                <span className={`device-card__icon device-card__icon--${tone}`}>
-                                  {iconUrl ? (
-                                    <img
-                                      className="device-card__icon-image"
-                                      src={iconUrl}
-                                      alt=""
-                                      loading="lazy"
-                                      onError={() => {
-                                        setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
-                                      }}
-                                    />
-                                  ) : (
-                                    glyph
-                                  )}
-                                </span>
+                                {renderDeviceLeading(device, tone, glyph, iconUrl)}
 
                                 <div className="device-card__control-stack">
                                   {isControllable ? (
@@ -1485,21 +1577,7 @@ export function App() {
                           ) : (
                             <>
                               <div className="device-card__top">
-                                <span className={`device-card__icon device-card__icon--${tone}`}>
-                                  {iconUrl ? (
-                                    <img
-                                      className="device-card__icon-image"
-                                      src={iconUrl}
-                                      alt=""
-                                      loading="lazy"
-                                      onError={() => {
-                                        setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
-                                      }}
-                                    />
-                                  ) : (
-                                    glyph
-                                  )}
-                                </span>
+                                {renderDeviceLeading(device, tone, glyph, iconUrl)}
 
                                 {isControllable ? (
                                   <button
@@ -1551,8 +1629,8 @@ export function App() {
                 })
               ) : (
                 <div className="dashboard-empty">
-                  <p>当前筛选房间还没有设备</p>
-                  <span>切换房间标签，或者点击右上角同步按钮刷新设备列表。</span>
+                  <p>{emptyStateTitle}</p>
+                  <span>{emptyStateDescription}</span>
                 </div>
               )}
             </div>

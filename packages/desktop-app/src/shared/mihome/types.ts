@@ -54,6 +54,7 @@ export interface MiHomeDeviceSummary {
   homeId: string;
   roomId?: string;
   roomName?: string;
+  isFavorite?: boolean;
   isOnline: boolean;
   capability: MiHomeDeviceCapability;
   cloudContext?: {

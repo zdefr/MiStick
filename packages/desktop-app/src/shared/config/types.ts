@@ -55,6 +55,7 @@ export interface AppConfig {
     refreshInterval: number;
     lastSyncAt?: string;
     aliases: Record<string, DeviceAliasRecord>;
+    favorites: string[];
   };
   logging: {
     level: LogLevel;

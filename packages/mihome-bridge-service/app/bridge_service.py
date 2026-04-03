@@ -196,7 +196,7 @@ class MiHomeBridgeService:
             membership = room_membership_map.get(str(did))
             room_id = membership['roomId'] if membership is not None else raw_device.get('room_id') or raw_device.get('roomId')
 
-            capability = self._probe_cloud_capability(api, raw_device)
+            capability = self._probe_cloud_capability_v2(api, raw_device)
             devices.append(
                 CloudDeviceDto(
                     did=str(did),
@@ -634,6 +634,111 @@ class MiHomeBridgeService:
         if region in {'cn', 'de', 'us'}:
             return region
         return 'cn'
+
+    def _probe_cloud_capability_v2(self, api: mijiaAPI, raw_device: dict[str, Any]) -> dict[str, Any]:
+        model_key = str(raw_device.get('model') or '')
+        cached_capability = self._capability_probe_cache.get(model_key)
+        if cached_capability is not None:
+            return dict(cached_capability)
+
+        did = raw_device.get('did')
+        if did is None:
+            return self._build_default_capability_v2(
+                'Device is missing did, capability probe skipped.',
+            )
+
+        try:
+            capability = self._probe_cloud_capability_runtime_v2(api, did)
+        except Exception as error:  # pragma: no cover - third-party runtime guard
+            capability = self._infer_capability_from_metadata_v2(raw_device, error)
+
+        capability_message = str(capability.get('capabilityMessage') or '')
+        if not capability_message.startswith('Capability probe failed:'):
+            self._capability_probe_cache[model_key] = dict(capability)
+
+        return capability
+
+    def _probe_cloud_capability_runtime_v2(self, api: mijiaAPI, did: Any) -> dict[str, Any]:
+        last_error: Exception | None = None
+
+        for attempt in range(2):
+            try:
+                device = mijiaDevice(api, did=str(did))
+                return self._resolve_capability_from_runtime_v2(device)
+            except Exception as error:  # pragma: no cover - third-party runtime guard
+                last_error = error
+                if attempt == 0:
+                    time.sleep(0.25)
+
+        if last_error is not None:
+            raise last_error
+
+        return self._build_default_capability_v2()
+
+    def _resolve_capability_from_runtime_v2(self, device: mijiaDevice) -> dict[str, Any]:
+        capability = self._build_default_capability_v2()
+        on_prop = device.prop_list.get('on')
+        mode_prop = device.prop_list.get('mode')
+
+        if on_prop and 'w' in on_prop.rw:
+            capability['supportsCloudControl'] = True
+            capability['supportedActions'] = ['turnOn', 'turnOff', 'toggle']
+            capability['capabilityMessage'] = 'Detected writable on property.'
+        elif on_prop:
+            capability['capabilityMessage'] = 'Detected on property, but it is not writable.'
+        else:
+            capability['capabilityMessage'] = 'No unified on property detected.'
+
+        if self._is_air_purifier(device.model) and mode_prop and 'w' in mode_prop.rw:
+            capability['supportsCloudControl'] = True
+            capability['supportedActions'] = [
+                *capability['supportedActions'],
+                'setModeAuto',
+                'setModeSleep',
+                'setModeFavorite',
+            ]
+            if on_prop and 'w' in on_prop.rw:
+                capability['capabilityMessage'] = 'Detected purifier power and mode control.'
+            else:
+                capability['capabilityMessage'] = 'Detected purifier mode control.'
+
+        return capability
+
+    def _infer_capability_from_metadata_v2(
+        self,
+        raw_device: dict[str, Any],
+        error: Exception,
+    ) -> dict[str, Any]:
+        capability = self._build_default_capability_v2(f'Capability probe failed: {error}')
+        model = str(raw_device.get('model') or '')
+        spec_type = str(raw_device.get('spec_type') or raw_device.get('specType') or '')
+        remote_controllable = self._to_bool(raw_device.get('remote_controllable'))
+
+        if self._is_socket_metadata_v2(model, spec_type) and remote_controllable is not False:
+            capability['supportsCloudControl'] = True
+            capability['supportedActions'] = ['turnOn', 'turnOff', 'toggle']
+            capability['capabilityMessage'] = 'Fallback enabled basic outlet power control.'
+
+        return capability
+
+    @staticmethod
+    def _build_default_capability_v2(
+        capability_message: str = 'No unified power control detected.',
+    ) -> dict[str, Any]:
+        return {
+            'supportsCloudControl': False,
+            'supportedActions': [],
+            'capabilityMessage': capability_message,
+        }
+
+    @staticmethod
+    def _is_socket_metadata_v2(model: str | None, spec_type: str | None = None) -> bool:
+        normalized_model = str(model or '').lower()
+        normalized_spec_type = str(spec_type or '').lower()
+        return (
+            any(keyword in normalized_model for keyword in ('plug', 'outlet', 'socket', 'cuco.'))
+            or ':device:outlet:' in normalized_spec_type
+        )
 
     def _probe_cloud_capability(self, api: mijiaAPI, raw_device: dict[str, Any]) -> dict[str, Any]:
         model_key = str(raw_device.get('model') or '')

@@ -119,6 +119,17 @@ export function registerIpcHandlers({
 
     return deviceSyncService.setAlias(deviceId, alias);
   });
+  replaceHandler('device:setFavorite', async (_event, { deviceId, isFavorite }) => {
+    if (typeof deviceId !== 'string' || deviceId.trim() === '') {
+      throw new Error('device:setFavorite requires a non-empty deviceId');
+    }
+
+    if (typeof isFavorite !== 'boolean') {
+      throw new Error('device:setFavorite requires isFavorite to be a boolean');
+    }
+
+    return deviceSyncService.setFavorite(deviceId, isFavorite);
+  });
   replaceHandler('device:getStatus', async (_event, { deviceId }) => {
     if (typeof deviceId !== 'string' || deviceId.trim() === '') {
       throw new Error('device:getStatus requires a non-empty deviceId');
