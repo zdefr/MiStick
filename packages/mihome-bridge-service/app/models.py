@@ -91,8 +91,9 @@ class DeviceStatusResponse(BaseModel):
     updatedAt: str
     route: Literal['cloud'] = 'cloud'
     power: bool | None = None
-    deviceClass: Literal['airPurifier'] | None = None
+    deviceClass: Literal['airPurifier', 'socket'] | None = None
     mode: Literal['auto', 'sleep', 'favorite'] | None = None
+    currentPowerW: float | None = None
     temperature: float | None = None
     humidity: int | None = None
     airQualityCode: int | None = None

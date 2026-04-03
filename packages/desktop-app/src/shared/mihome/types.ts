@@ -74,8 +74,9 @@ export interface DeviceStatusSnapshot {
   online: boolean;
   updatedAt: string;
   route: DeviceControlRoute;
-  deviceClass?: 'airPurifier';
+  deviceClass?: 'airPurifier' | 'socket';
   mode?: 'auto' | 'sleep' | 'favorite';
+  currentPowerW?: number;
   temperature?: number;
   humidity?: number;
   airQualityCode?: number;

@@ -15,6 +15,7 @@ const LONG_PRESS_DELAY_MS = 2000;
 const LONG_PRESS_TICK_MS = 100;
 const HINT_RESET_DELAY_MS = 1200;
 const LOGIN_POLL_INTERVAL_MS = 2000;
+const ENVIRONMENT_DEVICE_STATUS_REFRESH_INTERVAL_MS = 20000;
 
 const DEFAULT_DRAG_HINT = '长按底部横条 2 秒后拖动窗口';
 const DRAG_HOLDING_HINT = '继续按住，进度填满后开始拖动';
@@ -34,6 +35,9 @@ const DEVICE_BUSY_LABELS: Partial<Record<DeviceControlAction | 'refresh', string
   refresh: '刷新中',
   turnOn: '开启中',
   turnOff: '关闭中',
+  setModeAuto: '切换自动中',
+  setModeSleep: '切换睡眠中',
+  setModeFavorite: '切换最爱中',
 };
 
 type ThemeMode = 'light' | 'dark';
@@ -110,17 +114,96 @@ function resolveAppTheme(theme: AppConfig['appearance']['theme'] | undefined): T
 }
 
 function canControlDevice(device: MiHomeDeviceSummary): boolean {
-  return (
-    device.capability.supportedActions?.includes('turnOn') === true ||
-    device.capability.supportedActions?.includes('turnOff') === true
-  );
+  return (device.capability.supportedActions?.length ?? 0) > 0;
 }
 
 function supportsDeviceAction(
   device: MiHomeDeviceSummary,
-  action: Extract<DeviceControlAction, 'turnOn' | 'turnOff' | 'toggle'>,
+  action: Exclude<DeviceControlAction, 'refresh'>,
 ): boolean {
   return device.capability.supportedActions?.includes(action) ?? false;
+}
+
+function isAirPurifierDevice(device: MiHomeDeviceSummary, status?: DeviceStatusSnapshot): boolean {
+  return status?.deviceClass === 'airPurifier' || device.model.startsWith('zhimi.air');
+}
+
+function isSocketDevice(device: MiHomeDeviceSummary, status?: DeviceStatusSnapshot): boolean {
+  return status?.deviceClass === 'socket' || getDeviceTone(device) === 'socket';
+}
+
+function isAirConditionerSocket(device: MiHomeDeviceSummary): boolean {
+  const searchText = getDeviceSearchText(device);
+  return searchText.includes('空调');
+}
+
+function shouldShowSocketPower(device: MiHomeDeviceSummary, status?: DeviceStatusSnapshot): boolean {
+  return (
+    isSocketDevice(device, status) &&
+    !isAirConditionerSocket(device) &&
+    status?.power === true &&
+    typeof status.currentPowerW === 'number'
+  );
+}
+
+function formatSocketPower(powerW?: number): string | null {
+  if (typeof powerW !== 'number' || Number.isNaN(powerW)) {
+    return null;
+  }
+
+  if (powerW >= 100) {
+    return `${Math.round(powerW)}W`;
+  }
+
+  if (powerW >= 10) {
+    return `${powerW.toFixed(1)}W`;
+  }
+
+  return `${powerW.toFixed(2)}W`;
+}
+
+function getSocketPowerTone(powerW?: number): 'low' | 'medium' | 'high' | null {
+  if (typeof powerW !== 'number' || Number.isNaN(powerW)) {
+    return null;
+  }
+
+  if (powerW < 200) {
+    return 'low';
+  }
+
+  if (powerW < 1400) {
+    return 'medium';
+  }
+
+  return 'high';
+}
+
+function getDeviceStatusRefreshIntervalMs(
+  device: MiHomeDeviceSummary,
+  status?: DeviceStatusSnapshot,
+): number | null {
+  if (isAirPurifierDevice(device, status)) {
+    return ENVIRONMENT_DEVICE_STATUS_REFRESH_INTERVAL_MS;
+  }
+
+  if (shouldShowSocketPower(device, status)) {
+    return ENVIRONMENT_DEVICE_STATUS_REFRESH_INTERVAL_MS;
+  }
+
+  return null;
+}
+
+function getAirPurifierModeLabel(mode?: DeviceStatusSnapshot['mode']): string {
+  switch (mode) {
+    case 'auto':
+      return '自动';
+    case 'sleep':
+      return '睡眠';
+    case 'favorite':
+      return '最爱';
+    default:
+      return '--';
+  }
 }
 
 function buildRoomTabs(devices: MiHomeDeviceSummary[]): string[] {
@@ -184,11 +267,15 @@ function getDeviceSortWeight(device: MiHomeDeviceSummary): number {
     return 0;
   }
 
-  if (canControlDevice(device)) {
+  if (isAirPurifierDevice(device)) {
     return 1;
   }
 
-  return 2;
+  if (canControlDevice(device)) {
+    return 2;
+  }
+
+  return 3;
 }
 
 function sortDashboardDevices(devices: MiHomeDeviceSummary[]): MiHomeDeviceSummary[] {
@@ -223,6 +310,10 @@ function getPowerState(device: MiHomeDeviceSummary, status?: DeviceStatusSnapsho
 function getDeviceStatusLine(device: MiHomeDeviceSummary, status?: DeviceStatusSnapshot): string {
   if (!(status?.online ?? device.isOnline)) {
     return '离线';
+  }
+
+  if (isAirPurifierDevice(device, status) && status?.mode) {
+    return `${getAirPurifierModeLabel(status.mode)}模式`;
   }
 
   if (status?.power === true) {
@@ -281,6 +372,11 @@ export function App() {
   const loginPollTimerRef = useRef<number | null>(null);
   const autoRefreshTimerRef = useRef<number | null>(null);
   const autoRefreshBusyRef = useRef<boolean>(false);
+  const deviceStatusRefreshTimerRef = useRef<number | null>(null);
+  const deviceBusyMapRef = useRef<Record<string, DeviceControlAction | 'refresh' | null>>({});
+  const deviceStatusesRef = useRef<Record<string, DeviceStatusSnapshot>>({});
+  const lastDeviceStatusRefreshAtRef = useRef<Record<string, number>>({});
+  const deviceStatusRefreshBusyRef = useRef<boolean>(false);
   const isMountedRef = useRef<boolean>(false);
   const initialDeviceSyncRef = useRef<boolean>(false);
 
@@ -294,6 +390,7 @@ export function App() {
       clearHintResetTimer();
       clearLoginPollTimer();
       clearAutoRefreshTimer();
+      clearDeviceStatusRefreshTimer();
       if (moveFrameRef.current !== null) {
         window.cancelAnimationFrame(moveFrameRef.current);
       }
@@ -327,6 +424,23 @@ export function App() {
   }, [devices]);
 
   useEffect(() => {
+    deviceBusyMapRef.current = deviceBusyMap;
+  }, [deviceBusyMap]);
+
+  useEffect(() => {
+    deviceStatusesRef.current = deviceStatuses;
+  }, [deviceStatuses]);
+
+  const visibleDevices = useMemo(() => {
+    const filtered =
+      selectedRoom === '全屋'
+        ? devices
+        : devices.filter((device) => (device.roomName ?? '未分配房间') === selectedRoom);
+
+    return sortDashboardDevices(filtered);
+  }, [devices, selectedRoom]);
+
+  useEffect(() => {
     clearAutoRefreshTimer();
 
     if (!config?.devices.autoRefresh || session?.status !== 'success') {
@@ -343,6 +457,31 @@ export function App() {
   }, [config?.devices.autoRefresh, config?.devices.refreshInterval, session?.status]);
 
   useEffect(() => {
+    clearDeviceStatusRefreshTimer();
+
+    if (session?.status !== 'success') {
+      return;
+    }
+
+    const refreshIntervals = visibleDevices
+      .map((device) => getDeviceStatusRefreshIntervalMs(device, deviceStatusesRef.current[device.id]))
+      .filter((value): value is number => value !== null);
+
+    if (refreshIntervals.length === 0) {
+      return;
+    }
+
+    const tickMs = Math.min(...refreshIntervals);
+    deviceStatusRefreshTimerRef.current = window.setInterval(() => {
+      void refreshVisibleDevicesByPolicy();
+    }, tickMs);
+
+    return () => {
+      clearDeviceStatusRefreshTimer();
+    };
+  }, [session?.status, visibleDevices]);
+
+  useEffect(() => {
     if (session?.status !== 'success') {
       initialDeviceSyncRef.current = false;
       return;
@@ -355,15 +494,6 @@ export function App() {
     initialDeviceSyncRef.current = true;
     void handleSyncDevices();
   }, [devices.length, isHydrating, isSyncingDevices, session?.status]);
-
-  const visibleDevices = useMemo(() => {
-    const filtered =
-      selectedRoom === '全屋'
-        ? devices
-        : devices.filter((device) => (device.roomName ?? '未分配房间') === selectedRoom);
-
-    return sortDashboardDevices(filtered);
-  }, [devices, selectedRoom]);
 
   useEffect(() => {
     if (session?.status !== 'success' || visibleDevices.length === 0) {
@@ -397,6 +527,7 @@ export function App() {
         for (const result of results) {
           if (result.status === 'fulfilled') {
             next[result.value.deviceId] = result.value.snapshot;
+            lastDeviceStatusRefreshAtRef.current[result.value.deviceId] = Date.now();
           }
         }
 
@@ -761,6 +892,7 @@ export function App() {
         ...current,
         [deviceId]: status,
       }));
+      lastDeviceStatusRefreshAtRef.current[deviceId] = Date.now();
       setDeviceFeedback(deviceId, status.message ?? '鐘舵€佸凡鍒锋柊', 'neutral');
     } catch (statusError) {
       if (!isMountedRef.current) {
@@ -776,37 +908,7 @@ export function App() {
   }
 
   async function handleControlDevice(deviceId: string, action: 'turnOn' | 'turnOff') {
-    setDeviceBusy(deviceId, action);
-
-    try {
-      const result = await window.mijia.device.control({ deviceId, action });
-      if (!isMountedRef.current) {
-        return;
-      }
-
-      if (result.updatedStatus) {
-        setDeviceStatuses((current) => ({
-          ...current,
-          [deviceId]: result.updatedStatus as DeviceStatusSnapshot,
-        }));
-      }
-
-      setDeviceFeedback(
-        deviceId,
-        result.message ?? (result.success ? '鎺у埗鎴愬姛' : '鎺у埗澶辫触'),
-        result.success ? 'success' : 'danger',
-      );
-    } catch (controlError) {
-      if (!isMountedRef.current) {
-        return;
-      }
-
-      setDeviceFeedback(deviceId, normalizeErrorMessage(controlError), 'danger');
-    } finally {
-      if (isMountedRef.current) {
-        setDeviceBusy(deviceId, null);
-      }
-    }
+    await handleControlDeviceAction(deviceId, action);
   }
 
   async function handleToggleDevice(device: MiHomeDeviceSummary) {
@@ -846,11 +948,58 @@ export function App() {
     }));
   }
 
+  async function handleAirPurifierModeChange(
+    deviceId: string,
+    action: 'setModeAuto' | 'setModeSleep' | 'setModeFavorite',
+  ) {
+    await handleControlDeviceAction(deviceId, action);
+  }
+
+  async function handleControlDeviceAction(
+    deviceId: string,
+    action: Exclude<DeviceControlAction, 'refresh' | 'toggle'>,
+  ) {
+    setDeviceBusy(deviceId, action);
+
+    try {
+      const result = await window.mijia.device.control({ deviceId, action });
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      if (result.updatedStatus) {
+        setDeviceStatuses((current) => ({
+          ...current,
+          [deviceId]: result.updatedStatus as DeviceStatusSnapshot,
+        }));
+        lastDeviceStatusRefreshAtRef.current[deviceId] = Date.now();
+      }
+
+      setDeviceFeedback(
+        deviceId,
+        result.message ?? (result.success ? '控制成功' : '控制失败'),
+        result.success ? 'success' : 'danger',
+      );
+    } catch (controlError) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setDeviceFeedback(deviceId, normalizeErrorMessage(controlError), 'danger');
+    } finally {
+      if (isMountedRef.current) {
+        setDeviceBusy(deviceId, null);
+      }
+    }
+  }
+
   function resetDeviceRuntimeState() {
     setDeviceStatuses({});
     setDeviceBusyMap({});
     setDeviceFeedbackMap({});
     setDeviceFeedbackToneMap({});
+    deviceStatusesRef.current = {};
+    lastDeviceStatusRefreshAtRef.current = {};
   }
 
   function scheduleLoginPoll(ticketId: string) {
@@ -901,6 +1050,69 @@ export function App() {
     if (autoRefreshTimerRef.current !== null) {
       window.clearInterval(autoRefreshTimerRef.current);
       autoRefreshTimerRef.current = null;
+    }
+  }
+
+  function clearDeviceStatusRefreshTimer() {
+    if (deviceStatusRefreshTimerRef.current !== null) {
+      window.clearInterval(deviceStatusRefreshTimerRef.current);
+      deviceStatusRefreshTimerRef.current = null;
+    }
+  }
+
+  async function refreshVisibleDevicesByPolicy() {
+    if (deviceStatusRefreshBusyRef.current) {
+      return;
+    }
+
+    deviceStatusRefreshBusyRef.current = true;
+
+    const now = Date.now();
+    const targets = visibleDevices.filter((device) => {
+      const refreshInterval = getDeviceStatusRefreshIntervalMs(device, deviceStatusesRef.current[device.id]);
+      if (refreshInterval === null) {
+        return false;
+      }
+
+      if (deviceBusyMapRef.current[device.id] != null) {
+        return false;
+      }
+
+      const lastRefreshedAt = lastDeviceStatusRefreshAtRef.current[device.id] ?? 0;
+      return now - lastRefreshedAt >= refreshInterval;
+    });
+
+    if (targets.length === 0) {
+      deviceStatusRefreshBusyRef.current = false;
+      return;
+    }
+
+    try {
+      const results = await Promise.allSettled(
+        targets.map(async (device) => ({
+          deviceId: device.id,
+          snapshot: await window.mijia.device.getStatus(device.id),
+        })),
+      );
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setDeviceStatuses((current) => {
+        const next = { ...current };
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            next[result.value.deviceId] = result.value.snapshot;
+            lastDeviceStatusRefreshAtRef.current[result.value.deviceId] = Date.now();
+          }
+        }
+
+        return next;
+      });
+    } finally {
+      deviceStatusRefreshBusyRef.current = false;
     }
   }
 
@@ -1088,58 +1300,238 @@ export function App() {
                   const busyAction = deviceBusyMap[device.id];
                   const powerState = getPowerState(device, status);
                   const isControllable = canControlDevice(device);
+                  const isAirPurifier = isAirPurifierDevice(device, status);
+                  const showSocketPower = shouldShowSocketPower(device, status);
+                  const socketPowerLabel = formatSocketPower(status?.currentPowerW);
+                  const socketPowerTone = getSocketPowerTone(status?.currentPowerW);
                   const roomLabel = device.roomName ?? '未分配房间';
+                  const statusLabel = feedback ?? getDeviceStatusLine(device, status);
                   const isFeature = tone === 'environment' || (index === 0 && !isControllable);
                   const iconUrl = deviceIconErrorMap[device.id] ? undefined : device.iconUrl;
 
                   return (
                     <article
                       key={device.id}
-                      className={`device-card device-card--${tone}${isFeature ? ' device-card--feature' : ''}`}
+                      className={`device-card device-card--${tone}${isFeature ? ' device-card--feature' : ''}${
+                        isAirPurifier ? ' device-card--air-purifier' : ''
+                      }`}
                     >
-                      <div className="device-card__top">
-                        <span className={`device-card__icon device-card__icon--${tone}`}>
-                          {iconUrl ? (
-                            <img
-                              className="device-card__icon-image"
-                              src={iconUrl}
-                              alt=""
-                              loading="lazy"
-                              onError={() => {
-                                setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
-                              }}
-                            />
+                      {isAirPurifier ? (
+                        <>
+                          <div className="device-card__summary">
+                            <div className="device-card__top">
+                              <span className={`device-card__icon device-card__icon--${tone}`}>
+                                {iconUrl ? (
+                                  <img
+                                    className="device-card__icon-image"
+                                    src={iconUrl}
+                                    alt=""
+                                    loading="lazy"
+                                    onError={() => {
+                                      setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
+                                    }}
+                                  />
+                                ) : (
+                                  glyph
+                                )}
+                              </span>
+
+                              {isControllable ? (
+                                <button
+                                  type="button"
+                                  className={`device-switch${
+                                    powerState === true ? ' device-switch--on' : ''
+                                  }${busyAction ? ' device-switch--busy' : ''}`}
+                                  onClick={() => {
+                                    void handleToggleDevice(device);
+                                  }}
+                                  disabled={busyAction != null}
+                                  title={busyAction ? (DEVICE_BUSY_LABELS[busyAction] ?? '切换中') : '切换设备'}
+                                >
+                                  <span className="device-switch__thumb" />
+                                </button>
+                              ) : null}
+                            </div>
+
+                            <div className="device-card__content device-card__content--compact">
+                              <div>
+                                <h3>{device.name}</h3>
+                                <p className="device-card__meta">
+                                  <span>{roomLabel}</span>
+                                  <span aria-hidden="true">|</span>
+                                  <span>{statusLabel}</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="device-card__mode-group" role="group" aria-label="空气净化器模式">
+                            {[
+                              ['自动', 'setModeAuto'],
+                              ['睡眠', 'setModeSleep'],
+                              ['最爱', 'setModeFavorite'],
+                            ].map(([label, action]) => {
+                              const isActive =
+                                (action === 'setModeAuto' && status?.mode === 'auto') ||
+                                (action === 'setModeSleep' && status?.mode === 'sleep') ||
+                                (action === 'setModeFavorite' && status?.mode === 'favorite');
+                              return (
+                                <button
+                                  key={action}
+                                  type="button"
+                                  className={`device-mode-chip${isActive ? ' device-mode-chip--active' : ''}`}
+                                  disabled={
+                                    busyAction != null ||
+                                    !supportsDeviceAction(
+                                      device,
+                                      action as 'setModeAuto' | 'setModeSleep' | 'setModeFavorite',
+                                    )
+                                  }
+                                  onClick={() => {
+                                    void handleAirPurifierModeChange(
+                                      device.id,
+                                      action as 'setModeAuto' | 'setModeSleep' | 'setModeFavorite',
+                                    );
+                                  }}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="device-card__metrics">
+                            <div className="device-metric">
+                              <span className="device-metric__label">温度</span>
+                              <strong className="device-metric__value">
+                                {typeof status?.temperature === 'number' ? `${Math.round(status.temperature)}°C` : '--'}
+                              </strong>
+                            </div>
+                            <div className="device-metric">
+                              <span className="device-metric__label">湿度</span>
+                              <strong className="device-metric__value">
+                                {typeof status?.humidity === 'number' ? `${status.humidity}%` : '--'}
+                              </strong>
+                            </div>
+                            <div className="device-metric">
+                              <span className="device-metric__label">空气质量</span>
+                              <strong className="device-metric__value">{status?.airQualityLabel ?? '--'}</strong>
+                              <span className="device-metric__subvalue">
+                                {typeof status?.pm25Density === 'number' ? `PM2.5 ${status.pm25Density}` : 'PM2.5 --'}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {showSocketPower && socketPowerLabel ? (
+                            <div className="device-card__summary device-card__summary--socket">
+                              <div className="device-card__top">
+                                <span className={`device-card__icon device-card__icon--${tone}`}>
+                                  {iconUrl ? (
+                                    <img
+                                      className="device-card__icon-image"
+                                      src={iconUrl}
+                                      alt=""
+                                      loading="lazy"
+                                      onError={() => {
+                                        setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
+                                      }}
+                                    />
+                                  ) : (
+                                    glyph
+                                  )}
+                                </span>
+
+                                <div className="device-card__control-stack">
+                                  {isControllable ? (
+                                    <button
+                                      type="button"
+                                      className={`device-switch${
+                                        powerState === true ? ' device-switch--on' : ''
+                                      }${busyAction ? ' device-switch--busy' : ''}`}
+                                      onClick={() => {
+                                        void handleToggleDevice(device);
+                                      }}
+                                      disabled={busyAction != null}
+                                      title={busyAction ? (DEVICE_BUSY_LABELS[busyAction] ?? '切换中') : '切换设备'}
+                                    >
+                                      <span className="device-switch__thumb" />
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              <div className="device-card__content device-card__content--compact">
+                                <div>
+                                  <div className="device-card__title-row">
+                                    <h3>{device.name}</h3>
+                                    <span
+                                      className={`device-card__power${
+                                        socketPowerTone ? ` device-card__power--${socketPowerTone}` : ''
+                                      }`}
+                                    >
+                                      {socketPowerLabel}
+                                    </span>
+                                  </div>
+                                  <p className="device-card__meta">
+                                    <span>{roomLabel}</span>
+                                    <span aria-hidden="true">|</span>
+                                    <span>{statusLabel}</span>
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
                           ) : (
-                            glyph
+                            <>
+                              <div className="device-card__top">
+                                <span className={`device-card__icon device-card__icon--${tone}`}>
+                                  {iconUrl ? (
+                                    <img
+                                      className="device-card__icon-image"
+                                      src={iconUrl}
+                                      alt=""
+                                      loading="lazy"
+                                      onError={() => {
+                                        setDeviceIconErrorMap((current) => ({ ...current, [device.id]: true }));
+                                      }}
+                                    />
+                                  ) : (
+                                    glyph
+                                  )}
+                                </span>
+
+                                {isControllable ? (
+                                  <button
+                                    type="button"
+                                    className={`device-switch${
+                                      powerState === true ? ' device-switch--on' : ''
+                                    }${busyAction ? ' device-switch--busy' : ''}`}
+                                    onClick={() => {
+                                      void handleToggleDevice(device);
+                                    }}
+                                    disabled={busyAction != null}
+                                    title={busyAction ? (DEVICE_BUSY_LABELS[busyAction] ?? '切换中') : '切换设备'}
+                                  >
+                                    <span className="device-switch__thumb" />
+                                  </button>
+                                ) : null}
+                              </div>
+
+                              <div className="device-card__content">
+                                <div>
+                                  <h3>{device.name}</h3>
+                                  <p className="device-card__meta">
+                                    <span>{roomLabel}</span>
+                                    <span aria-hidden="true">|</span>
+                                    <span>{statusLabel}</span>
+                                  </p>
+                                </div>
+                              </div>
+                            </>
                           )}
-                        </span>
-
-                        {isControllable ? (
-                          <button
-                            type="button"
-                            className={`device-switch${
-                              powerState === true ? ' device-switch--on' : ''
-                            }${busyAction ? ' device-switch--busy' : ''}`}
-                            onClick={() => {
-                              void handleToggleDevice(device);
-                            }}
-                            disabled={busyAction != null}
-                            title={busyAction ? (DEVICE_BUSY_LABELS[busyAction] ?? '切换中') : '切换设备'}
-                          >
-                            <span className="device-switch__thumb" />
-                          </button>
-                        ) : null}
-                      </div>
-
-                      <div className="device-card__content">
-                        <div>
-                          <h3>{device.name}</h3>
-                          <p className="device-card__room">{roomLabel}</p>
-                        </div>
-                        <p className="device-card__status">
-                          {feedback ?? getDeviceStatusLine(device, status)}
-                        </p>
-                      </div>
+                        </>
+                      )}
 
                       <div className="device-card__bottom">
                         <span

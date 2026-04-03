@@ -131,7 +131,11 @@ export function registerIpcHandlers({
       throw new Error('device:control requires a non-empty deviceId');
     }
 
-    if (!['toggle', 'turnOn', 'turnOff', 'refresh'].includes(command.action)) {
+    if (
+      !['toggle', 'turnOn', 'turnOff', 'refresh', 'setModeAuto', 'setModeSleep', 'setModeFavorite'].includes(
+        command.action,
+      )
+    ) {
       throw new Error('device:control requires a supported action');
     }
 

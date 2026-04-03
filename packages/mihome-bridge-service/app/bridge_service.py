@@ -276,7 +276,11 @@ class MiHomeBridgeService:
             if 'on' in device.prop_list:
                 status.power = bool(device.get('on'))
             else:
-                status.message = '??????? on ????????????????'
+                status.message = '当前设备未暴露 on 属性，暂不支持统一开关状态读取。'
+
+            if self._is_socket_device(device.model):
+                status.deviceClass = 'socket'
+                status.currentPowerW = self._read_socket_power(device)
 
             if self._is_air_purifier(device.model):
                 status.deviceClass = 'airPurifier'
@@ -303,7 +307,7 @@ class MiHomeBridgeService:
             return CloudControlResponse(
                 deviceId=device_id,
                 success=False,
-                message='??????? on ??????????????',
+                message='当前设备未暴露 on 属性，暂不支持统一开关控制。',
             )
 
         if action == 'turnOn':
@@ -336,7 +340,7 @@ class MiHomeBridgeService:
         return CloudControlResponse(
             deviceId=device_id,
             success=True,
-            message='??????????',
+            message='云端控制指令已下发。',
             updatedStatus=updated_status,
         )
 
@@ -640,12 +644,12 @@ class MiHomeBridgeService:
         capability = {
             'supportsCloudControl': False,
             'supportedActions': [],
-            'capabilityMessage': '?????????????',
+            'capabilityMessage': '未探测到统一开关控制能力。',
         }
 
         did = raw_device.get('did')
         if did is None:
-            capability['capabilityMessage'] = '???? did??????????'
+            capability['capabilityMessage'] = '设备缺少 did，无法进行能力探测。'
             return capability
 
         try:
@@ -656,11 +660,11 @@ class MiHomeBridgeService:
             if on_prop and 'w' in on_prop.rw:
                 capability['supportsCloudControl'] = True
                 capability['supportedActions'] = ['turnOn', 'turnOff', 'toggle']
-                capability['capabilityMessage'] = '?????? on ???'
+                capability['capabilityMessage'] = '已探测到可写 on 属性。'
             elif on_prop:
-                capability['capabilityMessage'] = '???? on ??????????????'
+                capability['capabilityMessage'] = '已探测到 on 属性，但当前未开放写入权限。'
             else:
-                capability['capabilityMessage'] = '?????????? on ???'
+                capability['capabilityMessage'] = '未探测到可统一控制的 on 属性。'
 
             if self._is_air_purifier(device.model) and mode_prop and 'w' in mode_prop.rw:
                 capability['supportsCloudControl'] = True
@@ -671,11 +675,11 @@ class MiHomeBridgeService:
                     'setModeFavorite',
                 ]
                 if on_prop and 'w' in on_prop.rw:
-                    capability['capabilityMessage'] = '?????????????????'
+                    capability['capabilityMessage'] = '已探测到净化器开关与模式控制能力。'
                 else:
-                    capability['capabilityMessage'] = '??????????????'
+                    capability['capabilityMessage'] = '已探测到净化器模式控制能力。'
         except Exception as error:  # pragma: no cover - third-party runtime guard
-            capability['capabilityMessage'] = f'??????: {error}'
+            capability['capabilityMessage'] = f'能力探测失败: {error}'
 
         self._capability_probe_cache[model_key] = dict(capability)
         return capability
@@ -684,6 +688,11 @@ class MiHomeBridgeService:
     def _is_air_purifier(model: str | None) -> bool:
         normalized = str(model or '').lower()
         return normalized.startswith('zhimi.air')
+
+    @staticmethod
+    def _is_socket_device(model: str | None) -> bool:
+        normalized = str(model or '').lower()
+        return any(keyword in normalized for keyword in ('plug', 'outlet', 'socket', 'cuco.'))
 
     @staticmethod
     def _read_numeric_prop(
@@ -700,6 +709,32 @@ class MiHomeBridgeService:
             return value_type(value)
         except (TypeError, ValueError):
             return None
+
+    @classmethod
+    def _read_first_numeric_prop(
+        cls,
+        device: mijiaDevice,
+        prop_names: list[str],
+        value_type: type[int] | type[float],
+    ) -> int | float | None:
+        for prop_name in prop_names:
+            value = cls._read_numeric_prop(device, prop_name, value_type)
+            if value is not None:
+                return value
+
+        return None
+
+    @classmethod
+    def _read_socket_power(cls, device: mijiaDevice) -> float | None:
+        value = cls._read_first_numeric_prop(
+            device,
+            ['electric-power', 'power-value', 'power'],
+            float,
+        )
+        if value is None or value < 0:
+            return None
+
+        return value
 
     @staticmethod
     def _read_air_purifier_mode(device: mijiaDevice) -> Literal['auto', 'sleep', 'favorite'] | None:
