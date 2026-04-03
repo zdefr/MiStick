@@ -27,8 +27,8 @@ export function applyWindowConfig(window: BrowserWindow, config: AppConfig): voi
     window.setAlwaysOnTop(config.window.alwaysOnTop);
   }
 
-  if (window.getOpacity() !== config.window.opacity) {
-    window.setOpacity(config.window.opacity);
+  if (window.getOpacity() !== 1) {
+    window.setOpacity(1);
   }
 
   window.setSkipTaskbar(config.window.skipTaskbar);

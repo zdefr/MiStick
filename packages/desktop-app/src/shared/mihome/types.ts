@@ -1,6 +1,14 @@
 export type LoginStatus = 'idle' | 'pending' | 'success' | 'expired' | 'error';
 export type DeviceControlRoute = 'cloud' | 'local' | 'unavailable';
-export type DeviceControlAction = 'toggle' | 'turnOn' | 'turnOff' | 'refresh';
+export type DeviceControlAction =
+  | 'toggle'
+  | 'turnOn'
+  | 'turnOff'
+  | 'refresh'
+  | 'setModeAuto'
+  | 'setModeSleep'
+  | 'setModeFavorite';
+export type DeviceNameSource = 'cloud' | 'alias';
 
 export interface MiHomeQrLoginTicket {
   ticketId: string;
@@ -31,15 +39,22 @@ export interface MiHomeDeviceCapability {
   supportsCloudControl: boolean;
   supportsLocalControl: boolean;
   preferredRoute: DeviceControlRoute;
+  supportedActions: DeviceControlAction[];
+  capabilityMessage?: string;
 }
 
 export interface MiHomeDeviceSummary {
   id: string;
   name: string;
+  originalName: string;
+  aliasName?: string;
+  nameSource: DeviceNameSource;
   model: string;
+  iconUrl?: string;
   homeId: string;
   roomId?: string;
   roomName?: string;
+  isFavorite?: boolean;
   isOnline: boolean;
   capability: MiHomeDeviceCapability;
   cloudContext?: {
@@ -60,6 +75,15 @@ export interface DeviceStatusSnapshot {
   online: boolean;
   updatedAt: string;
   route: DeviceControlRoute;
+  deviceClass?: 'airPurifier' | 'socket';
+  mode?: 'auto' | 'sleep' | 'favorite';
+  currentPowerW?: number;
+  temperature?: number;
+  humidity?: number;
+  airQualityCode?: number;
+  airQualityLabel?: string;
+  pm25Density?: number;
+  message?: string;
   raw?: Record<string, unknown>;
 }
 

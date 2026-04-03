@@ -2,6 +2,15 @@ export type MiHomeRegion = 'cn' | 'de' | 'us';
 export type AppearanceTheme = 'light' | 'dark' | 'system';
 export type AppLanguage = 'zh-CN' | 'en';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type DeviceAliasSource = 'seed' | 'manual';
+
+export interface DeviceAliasRecord {
+  alias: string;
+  applyWhenOriginalName?: string;
+  source: DeviceAliasSource;
+  note?: string;
+  updatedAt: string;
+}
 
 export interface AppConfig {
   version: string;
@@ -32,6 +41,8 @@ export interface AppConfig {
     y?: number;
     alwaysOnTop: boolean;
     opacity: number;
+    backgroundOpacity: number;
+    interactionOpacity: number;
     skipTaskbar: boolean;
   };
   appearance: {
@@ -43,6 +54,8 @@ export interface AppConfig {
     autoRefresh: boolean;
     refreshInterval: number;
     lastSyncAt?: string;
+    aliases: Record<string, DeviceAliasRecord>;
+    favorites: string[];
   };
   logging: {
     level: LogLevel;

@@ -12,7 +12,20 @@ export class DeviceControlService {
     const capability = await this.capabilityPort.getCapability(command.deviceId);
 
     if (capability.preferredRoute === 'cloud' && capability.supportsCloudControl) {
-      return this.cloudControlPort.execute(command);
+      try {
+        return await this.cloudControlPort.execute(command);
+      } catch (error) {
+        if (capability.supportsLocalControl) {
+          return this.localControlPort.execute(command);
+        }
+
+        return {
+          deviceId: command.deviceId,
+          success: false,
+          route: 'cloud',
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
 
     if (capability.supportsLocalControl) {
@@ -31,7 +44,23 @@ export class DeviceControlService {
     const capability = await this.capabilityPort.getCapability(deviceId);
 
     if (capability.preferredRoute === 'cloud' && capability.supportsCloudControl) {
-      return this.cloudControlPort.getStatus(deviceId);
+      try {
+        return await this.cloudControlPort.getStatus(deviceId);
+      } catch (error) {
+        if (capability.supportsLocalControl) {
+          return this.localControlPort.getStatus(deviceId);
+        }
+
+        return {
+          deviceId,
+          online: false,
+          updatedAt: new Date().toISOString(),
+          route: 'cloud',
+          raw: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
     }
 
     if (capability.supportsLocalControl) {

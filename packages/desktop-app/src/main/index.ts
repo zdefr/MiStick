@@ -3,6 +3,20 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog } from 'electron';
 import { registerIpcHandlers } from './ipc/register-ipc-handlers';
 import { ConfigService } from './modules/config';
+import {
+  CachedDeviceCapabilityPort,
+  DeviceControlService,
+  HttpCloudControlPort,
+  NoopLocalControlPort,
+} from './modules/device-control';
+import {
+  ConfigDeviceAliasPort,
+  ConfigDeviceFavoritePort,
+  DeviceSyncService,
+  FileDeviceCachePort,
+  HttpDeviceCloudSyncPort,
+} from './modules/device-sync';
+import { ConfigSessionPort, HttpMiHomeBridgeAuthPort, MiHomeSessionService } from './modules/mihome-session';
 import { createMainWindow } from './window/create-main-window';
 import { bindWindowStatePersistence } from './window/window-state';
 
@@ -87,10 +101,31 @@ async function migrateLegacyUserData(): Promise<void> {
 async function bootstrap(): Promise<void> {
   await migrateLegacyUserData();
 
-  const configService = new ConfigService(app.getPath('userData'));
+  const userDataDir = app.getPath('userData');
+  const configService = new ConfigService(userDataDir);
   const config = await configService.load();
+  const bridgeClientOptions = {
+    baseUrl: config.services.mihomeBridge.baseUrl,
+    timeoutMs: config.services.mihomeBridge.timeoutMs,
+  };
+  const mihomeSessionService = new MiHomeSessionService(
+    new HttpMiHomeBridgeAuthPort(bridgeClientOptions),
+    new ConfigSessionPort(configService),
+  );
+  const deviceCachePort = new FileDeviceCachePort(path.join(userDataDir, 'cache', 'devices.json'));
+  const deviceSyncService = new DeviceSyncService(
+    new HttpDeviceCloudSyncPort(bridgeClientOptions),
+    deviceCachePort,
+    new ConfigDeviceAliasPort(configService),
+    new ConfigDeviceFavoritePort(configService),
+  );
+  const deviceControlService = new DeviceControlService(
+    new CachedDeviceCapabilityPort(deviceCachePort),
+    new HttpCloudControlPort(bridgeClientOptions),
+    new NoopLocalControlPort(),
+  );
 
-  registerIpcHandlers({ configService });
+  registerIpcHandlers({ configService, deviceControlService, mihomeSessionService, deviceSyncService });
   const mainWindow = createMainWindow(config);
   bindWindowStatePersistence(mainWindow, configService, config);
 
