@@ -13,6 +13,9 @@ __pycache__/
 packages/*/node_modules/
 packages/*/dist/
 packages/*/dist-electron/
+packages/*/.build/
+packages/*/release/
+packages/*/release-*/
 
 *.log
 *.tmp

@@ -28,8 +28,36 @@ export function createMainWindow(config: AppConfig): BrowserWindow {
 
   applyWindowConfig(window, config);
 
-  window.once('ready-to-show', () => {
+  const showWindow = (): void => {
+    if (window.isDestroyed() || window.isVisible()) {
+      return;
+    }
+
     window.show();
+    window.focus();
+  };
+
+  const fallbackTimer = setTimeout(() => {
+    console.warn('Main window did not emit ready-to-show in time, forcing visible state.');
+    showWindow();
+  }, 5_000);
+
+  window.once('show', () => {
+    clearTimeout(fallbackTimer);
+  });
+
+  window.once('ready-to-show', showWindow);
+  window.webContents.once('did-finish-load', showWindow);
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+
+    clearTimeout(fallbackTimer);
+    console.error(
+      `Main window failed to load: code=${errorCode}, description=${errorDescription}, url=${validatedURL}`,
+    );
+    showWindow();
   });
 
   return window;

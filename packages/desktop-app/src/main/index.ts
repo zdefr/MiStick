@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, dialog } from 'electron';
+import { BundledBridgeService } from './bridge/bundled-bridge-service';
 import { registerIpcHandlers } from './ipc/register-ipc-handlers';
 import { ConfigService } from './modules/config';
 import {
@@ -23,6 +24,7 @@ import { bindWindowStatePersistence } from './window/window-state';
 const appName = 'mijia-sticky';
 const isDev = !app.isPackaged;
 const rendererDevServerUrl = 'http://127.0.0.1:5173';
+let bundledBridgeService: BundledBridgeService | undefined;
 
 app.setName(appName);
 if (process.platform === 'win32') {
@@ -108,6 +110,15 @@ async function bootstrap(): Promise<void> {
     baseUrl: config.services.mihomeBridge.baseUrl,
     timeoutMs: config.services.mihomeBridge.timeoutMs,
   };
+
+  if (!isDev) {
+    bundledBridgeService ??= new BundledBridgeService(userDataDir);
+    Object.assign(
+      bridgeClientOptions,
+      await bundledBridgeService.ensureStarted(config.services.mihomeBridge.timeoutMs),
+    );
+  }
+
   const mihomeSessionService = new MiHomeSessionService(
     new HttpMiHomeBridgeAuthPort(bridgeClientOptions),
     new ConfigSessionPort(configService),
@@ -168,4 +179,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  void bundledBridgeService?.stop();
 });

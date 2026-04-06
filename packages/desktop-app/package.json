@@ -14,7 +14,9 @@
         "build:renderer": "vite build",
         "build:main": "tsup src/main/index.ts --format cjs --target node20 --out-dir dist-electron/main --external electron",
         "build:preload": "tsup src/preload/index.ts --format cjs --target node20 --out-dir dist-electron/preload --external electron",
-        "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+        "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "build:bridge": "powershell -ExecutionPolicy Bypass -File ..\\mihome-bridge-service\\build-win.ps1",
+        "dist:win": "pnpm run build:bridge && pnpm run build && electron-builder --win nsis"
     },
     "dependencies": {
         "lucide-react": "^1.7.0",
@@ -30,11 +32,51 @@
         "@vitejs/plugin-react": "^4.4.1",
         "concurrently": "^9.1.2",
         "electron": "28.3.3",
+        "electron-builder": "^24.13.3",
         "electronmon": "^2.0.2",
         "tsup": "^8.4.0",
         "typescript": "^5.8.2",
         "vite": "^6.2.2",
         "wait-on": "^8.0.3"
     },
-    "productName": "mijia-sticky"
+    "productName": "mijia-sticky",
+    "build": {
+        "appId": "com.mijia.sticky",
+        "productName": "mijia-sticky",
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "dist/renderer/**/*",
+            "dist-electron/**/*",
+            "package.json"
+        ],
+        "asar": true,
+        "extraResources": [
+            {
+                "from": "../mihome-bridge-service/dist/mihome-bridge-service",
+                "to": "bridge",
+                "filter": [
+                    "**/*"
+                ]
+            }
+        ],
+        "win": {
+            "signAndEditExecutable": false,
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "artifactName": "${productName}-${version}-${arch}-setup.${ext}"
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "createDesktopShortcut": "always"
+        }
+    }
 }

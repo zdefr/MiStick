@@ -5,7 +5,8 @@
     "scripts": {
         "dev": "pnpm --filter @mijia/desktop-app dev",
         "build": "pnpm --filter @mijia/desktop-app build",
-        "typecheck": "pnpm --filter @mijia/desktop-app typecheck"
+        "typecheck": "pnpm --filter @mijia/desktop-app typecheck",
+        "dist:win": "pnpm --filter @mijia/desktop-app dist:win"
     },
     "pnpm": {
         "onlyBuiltDependencies": [
