@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from urllib import parse
 
 import requests
 from mijiaAPI import APIError, LoginError, mijiaAPI, mijiaDevice
+from mijiaAPI.devices import get_device_info
 from pydantic import TypeAdapter
 from qrcode import QRCode
 
@@ -36,6 +38,10 @@ SESSION_META_ADAPTER = TypeAdapter(dict[str, str])
 AUTH_KEYS = ['psecurity', 'nonce', 'ssecurity', 'passToken', 'userId', 'cUserId']
 DEVICE_ICON_CACHE_TTL = timedelta(days=7)
 DEVICE_ICON_PAGE_URL = 'https://home.miot-spec.com/s/{model}'
+DEVICE_SPEC_CACHE_DIRNAME = 'device-spec-cache'
+SLOW_DEVICE_STAGE_MS = 800
+MAX_SLOW_STAGE_ITEMS = 5
+LOGGER = logging.getLogger('mihome-bridge.sync')
 
 
 @dataclass
@@ -55,6 +61,7 @@ class MiHomeBridgeService:
     def __init__(self) -> None:
         settings.runtime_dir.mkdir(parents=True, exist_ok=True)
         settings.device_icon_cache_dir.mkdir(parents=True, exist_ok=True)
+        (settings.runtime_dir / DEVICE_SPEC_CACHE_DIRNAME).mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._login_tasks: dict[str, LoginTask] = {}
         self._capability_probe_cache: dict[str, dict[str, Any]] = {}
@@ -159,34 +166,27 @@ class MiHomeBridgeService:
 
     def get_rooms(self, home_id: str | None = None) -> list[RoomDto]:
         api = self._require_session()
-        rooms: list[RoomDto] = []
-
-        for home in api.get_homes_list():
-            current_home_id = str(home.get('id', ''))
-            if home_id is not None and current_home_id != home_id:
-                continue
-
-            for room in home.get('roomlist', []) or []:
-                room_id = room.get('id') or room.get('room_id')
-                if room_id is None:
-                    continue
-
-                rooms.append(
-                    RoomDto(
-                        id=str(room_id),
-                        homeId=current_home_id,
-                        name=str(room.get('name') or room.get('room_name') or '(unnamed-room)'),
-                    )
-                )
-
+        rooms, _, _ = self._build_room_context(api, home_id)
         return rooms
 
     def get_devices(self, home_id: str | None = None) -> list[CloudDeviceDto]:
         api = self._require_session()
-        room_membership_map = self._build_room_membership_map(api, home_id)
-        room_map = {room.id: room.name for room in self.get_rooms(home_id)}
+        started_at = time.perf_counter()
+        _, room_membership_map, room_map = self._build_room_context(api, home_id)
+        room_context_ms = (time.perf_counter() - started_at) * 1000
+
+        device_list_started_at = time.perf_counter()
         raw_devices = api.get_devices_list(home_id)
+        device_list_ms = (time.perf_counter() - device_list_started_at) * 1000
         devices: list[CloudDeviceDto] = []
+        capability_total_ms = 0.0
+        icon_total_ms = 0.0
+        capability_sources: dict[str, int] = {}
+        icon_sources: dict[str, int] = {}
+        slow_capability_items: list[tuple[float, str, str]] = []
+        slow_icon_items: list[tuple[float, str, str]] = []
+
+        build_started_at = time.perf_counter()
 
         for raw_device in raw_devices:
             did = raw_device.get('did')
@@ -196,13 +196,36 @@ class MiHomeBridgeService:
             membership = room_membership_map.get(str(did))
             room_id = membership['roomId'] if membership is not None else raw_device.get('room_id') or raw_device.get('roomId')
 
-            capability = self._probe_cloud_capability_v2(api, raw_device)
+            capability_started_at = time.perf_counter()
+            capability, capability_source = self._probe_cloud_capability_v2(raw_device)
+            capability_ms = (time.perf_counter() - capability_started_at) * 1000
+            capability_total_ms += capability_ms
+            capability_sources[capability_source] = capability_sources.get(capability_source, 0) + 1
+            self._append_slow_stage_item(
+                slow_capability_items,
+                capability_ms,
+                str(raw_device.get('model') or raw_device.get('did') or '(unknown-device)'),
+                capability_source,
+            )
+
+            icon_started_at = time.perf_counter()
+            icon_url, icon_source = self._resolve_device_icon_url(raw_device)
+            icon_ms = (time.perf_counter() - icon_started_at) * 1000
+            icon_total_ms += icon_ms
+            icon_sources[icon_source] = icon_sources.get(icon_source, 0) + 1
+            self._append_slow_stage_item(
+                slow_icon_items,
+                icon_ms,
+                str(raw_device.get('model') or raw_device.get('did') or '(unknown-device)'),
+                icon_source,
+            )
+
             devices.append(
                 CloudDeviceDto(
                     did=str(did),
                     name=str(raw_device.get('name') or raw_device.get('device_name') or '(unnamed-device)'),
                     model=str(raw_device.get('model') or '-'),
-                    iconUrl=self._resolve_device_icon_url(raw_device),
+                    iconUrl=icon_url,
                     homeId=str(raw_device.get('home_id') or raw_device.get('homeId') or ''),
                     roomId=str(room_id) if room_id is not None else None,
                     roomName=(
@@ -219,12 +242,37 @@ class MiHomeBridgeService:
                 )
             )
 
+        build_ms = (time.perf_counter() - build_started_at) * 1000
+        total_ms = (time.perf_counter() - started_at) * 1000
+        LOGGER.info(
+            (
+                'get_devices timing homeId=%s devices=%d total=%.1fms '
+                'roomContext=%.1fms deviceList=%.1fms build=%.1fms '
+                'capability=%.1fms icon=%.1fms capabilitySources=%s iconSources=%s '
+                'slowCapability=%s slowIcons=%s'
+            ),
+            home_id or 'all',
+            len(devices),
+            total_ms,
+            room_context_ms,
+            device_list_ms,
+            build_ms,
+            capability_total_ms,
+            icon_total_ms,
+            capability_sources,
+            icon_sources,
+            self._format_slow_stage_items(slow_capability_items),
+            self._format_slow_stage_items(slow_icon_items),
+        )
+
         return devices
 
-    def _build_room_membership_map(
+    def _build_room_context(
         self, api: mijiaAPI, home_id: str | None = None
-    ) -> dict[str, dict[str, str]]:
+    ) -> tuple[list[RoomDto], dict[str, dict[str, str]], dict[str, str]]:
+        rooms: list[RoomDto] = []
         membership_map: dict[str, dict[str, str]] = {}
+        room_map: dict[str, str] = {}
 
         for home in api.get_homes_list():
             current_home_id = str(home.get('id', ''))
@@ -237,13 +285,22 @@ class MiHomeBridgeService:
                     continue
 
                 room_name = str(room.get('name') or room.get('room_name') or '(unnamed-room)')
+                room_id_str = str(room_id)
+                rooms.append(
+                    RoomDto(
+                        id=room_id_str,
+                        homeId=current_home_id,
+                        name=room_name,
+                    )
+                )
+                room_map[room_id_str] = room_name
                 for did in room.get('dids', []) or []:
                     membership_map[str(did)] = {
-                        'roomId': str(room_id),
+                        'roomId': room_id_str,
                         'roomName': room_name,
                     }
 
-        return membership_map
+        return rooms, membership_map, room_map
 
     def sync(self) -> SyncResponse:
         homes = self.get_homes()
@@ -344,21 +401,23 @@ class MiHomeBridgeService:
             updatedStatus=updated_status,
         )
 
-    def _resolve_device_icon_url(self, raw_device: dict[str, Any]) -> str | None:
+    def _resolve_device_icon_url(self, raw_device: dict[str, Any]) -> tuple[str | None, str]:
         model = str(raw_device.get('model') or '').strip()
         if not model or model == '-':
-            return None
+            return None, 'missing-model'
 
         cached = self._read_device_icon_cache(model)
         if cached is not None:
-            return cached.get('iconUrl') or None
+            return cached.get('iconUrl') or None, 'cache'
 
         try:
             icon_url = self._fetch_device_icon_url(model)
+            source = 'fetched'
         except Exception:
             icon_url = None
+            source = 'fetch-error'
         self._write_device_icon_cache(model, icon_url)
-        return icon_url
+        return icon_url, source
 
     def _read_device_icon_cache(self, model: str) -> dict[str, Any] | None:
         cache_path = settings.device_icon_cache_dir / f'{self._sanitize_cache_key(model)}.json'
@@ -635,52 +694,82 @@ class MiHomeBridgeService:
             return region
         return 'cn'
 
-    def _probe_cloud_capability_v2(self, api: mijiaAPI, raw_device: dict[str, Any]) -> dict[str, Any]:
-        model_key = str(raw_device.get('model') or '')
+    def _probe_cloud_capability_v2(self, raw_device: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        model_key = str(raw_device.get('model') or '').strip()
         cached_capability = self._capability_probe_cache.get(model_key)
         if cached_capability is not None:
-            return dict(cached_capability)
+            return dict(cached_capability), 'memory-cache'
 
-        did = raw_device.get('did')
-        if did is None:
-            return self._build_default_capability_v2(
-                'Device is missing did, capability probe skipped.',
+        if not model_key or model_key == '-':
+            return (
+                self._build_default_capability_v2(
+                    'Device model missing, capability probe skipped.',
+                ),
+                'missing-model',
             )
 
+        spec_cache_exists = self._get_device_spec_cache_path(model_key).exists()
         try:
-            capability = self._probe_cloud_capability_runtime_v2(api, did)
+            device_info = get_device_info(
+                model_key,
+                cache_path=settings.runtime_dir / DEVICE_SPEC_CACHE_DIRNAME,
+            )
+            capability = self._resolve_capability_from_spec_v2(model_key, device_info)
+            source = 'spec-cache' if spec_cache_exists else 'spec-fetch'
         except Exception as error:  # pragma: no cover - third-party runtime guard
             capability = self._infer_capability_from_metadata_v2(raw_device, error)
+            source = 'metadata-fallback'
 
         capability_message = str(capability.get('capabilityMessage') or '')
         if not capability_message.startswith('Capability probe failed:'):
             self._capability_probe_cache[model_key] = dict(capability)
 
-        return capability
+        return capability, source
 
-    def _probe_cloud_capability_runtime_v2(self, api: mijiaAPI, did: Any) -> dict[str, Any]:
-        last_error: Exception | None = None
+    @staticmethod
+    def _append_slow_stage_item(
+        items: list[tuple[float, str, str]],
+        duration_ms: float,
+        subject: str,
+        source: str,
+    ) -> None:
+        if duration_ms < SLOW_DEVICE_STAGE_MS:
+            return
 
-        for attempt in range(2):
-            try:
-                device = mijiaDevice(api, did=str(did))
-                return self._resolve_capability_from_runtime_v2(device)
-            except Exception as error:  # pragma: no cover - third-party runtime guard
-                last_error = error
-                if attempt == 0:
-                    time.sleep(0.25)
+        items.append((duration_ms, subject, source))
+        items.sort(key=lambda item: item[0], reverse=True)
+        del items[MAX_SLOW_STAGE_ITEMS:]
 
-        if last_error is not None:
-            raise last_error
+    @staticmethod
+    def _format_slow_stage_items(items: list[tuple[float, str, str]]) -> str:
+        if not items:
+            return '[]'
 
-        return self._build_default_capability_v2()
+        return '[' + ', '.join(
+            f'{subject}@{duration_ms:.1f}ms({source})'
+            for duration_ms, subject, source in items
+        ) + ']'
 
-    def _resolve_capability_from_runtime_v2(self, device: mijiaDevice) -> dict[str, Any]:
+    @staticmethod
+    def _get_device_spec_cache_path(model: str):
+        return settings.runtime_dir / DEVICE_SPEC_CACHE_DIRNAME / f'{model}.json'
+
+    def _resolve_capability_from_spec_v2(
+        self,
+        model: str,
+        device_info: dict[str, Any],
+    ) -> dict[str, Any]:
         capability = self._build_default_capability_v2()
-        on_prop = device.prop_list.get('on')
-        mode_prop = device.prop_list.get('mode')
+        properties = device_info.get('properties', [])
+        prop_map = {
+            str(prop.get('name')): prop
+            for prop in properties
+            if isinstance(prop, dict) and prop.get('name')
+        }
+        on_prop = prop_map.get('on')
+        mode_prop = prop_map.get('mode')
 
-        if on_prop and 'w' in on_prop.rw:
+        if self._is_writable_prop(on_prop):
             capability['supportsCloudControl'] = True
             capability['supportedActions'] = ['turnOn', 'turnOff', 'toggle']
             capability['capabilityMessage'] = 'Detected writable on property.'
@@ -689,7 +778,7 @@ class MiHomeBridgeService:
         else:
             capability['capabilityMessage'] = 'No unified on property detected.'
 
-        if self._is_air_purifier(device.model) and mode_prop and 'w' in mode_prop.rw:
+        if self._is_air_purifier(model) and self._is_writable_prop(mode_prop):
             capability['supportsCloudControl'] = True
             capability['supportedActions'] = [
                 *capability['supportedActions'],
@@ -697,7 +786,7 @@ class MiHomeBridgeService:
                 'setModeSleep',
                 'setModeFavorite',
             ]
-            if on_prop and 'w' in on_prop.rw:
+            if self._is_writable_prop(on_prop):
                 capability['capabilityMessage'] = 'Detected purifier power and mode control.'
             else:
                 capability['capabilityMessage'] = 'Detected purifier mode control.'
@@ -730,6 +819,10 @@ class MiHomeBridgeService:
             'supportedActions': [],
             'capabilityMessage': capability_message,
         }
+
+    @staticmethod
+    def _is_writable_prop(prop: dict[str, Any] | None) -> bool:
+        return isinstance(prop, dict) and 'w' in str(prop.get('rw') or '')
 
     @staticmethod
     def _is_socket_metadata_v2(model: str | None, spec_type: str | None = None) -> bool:

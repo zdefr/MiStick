@@ -31,17 +31,22 @@ interface BridgeDeviceDto {
   capabilityMessage?: string;
 }
 
+const DEVICE_SYNC_TIMEOUT_MS = 300000;
+
 export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
   constructor(private readonly options: BridgeClientOptions) {}
 
   async getHomes(): Promise<MiHomeHomeSummary[]> {
-    const homes = await this.getJson<Array<{ id: string; name: string }>>('/api/cloud/homes');
+    const homes = await this.getJson<Array<{ id: string; name: string }>>(
+      '/api/cloud/homes',
+      this.getSyncTimeoutMs(),
+    );
     return homes.map((home) => ({ id: home.id, name: home.name }));
   }
 
-  async getRooms(homeId: string): Promise<MiHomeRoomSummary[]> {
+  async getRooms(homeId?: string): Promise<MiHomeRoomSummary[]> {
     const rooms = await this.getJson<BridgeRoomDto[]>(
-      `/api/cloud/rooms?homeId=${encodeURIComponent(homeId)}`,
+      this.buildCloudUrl('/api/cloud/rooms', homeId),
       this.getSyncTimeoutMs(),
     );
     return rooms.map((room) => ({
@@ -51,11 +56,9 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
     }));
   }
 
-  async getDevices(homeId: string): Promise<MiHomeDeviceSummary[]> {
-    const rooms = await this.getRooms(homeId);
-    const roomMap = new Map(rooms.map((room) => [room.id, room.name]));
+  async getDevices(homeId?: string): Promise<MiHomeDeviceSummary[]> {
     const devices = await this.getJson<BridgeDeviceDto[]>(
-      `/api/cloud/devices?homeId=${encodeURIComponent(homeId)}`,
+      this.buildCloudUrl('/api/cloud/devices', homeId),
       this.getSyncTimeoutMs(),
     );
 
@@ -90,9 +93,8 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
 
       if (device.roomId) {
         summary.roomId = device.roomId;
-        const roomName = device.roomName ?? roomMap.get(device.roomId);
-        if (roomName) {
-          summary.roomName = roomName;
+        if (device.roomName) {
+          summary.roomName = device.roomName;
         }
       }
 
@@ -100,8 +102,16 @@ export class HttpDeviceCloudSyncPort implements DeviceCloudSyncPort {
     });
   }
 
+  private buildCloudUrl(path: '/api/cloud/rooms' | '/api/cloud/devices', homeId?: string): string {
+    if (!homeId) {
+      return path;
+    }
+
+    return `${path}?homeId=${encodeURIComponent(homeId)}`;
+  }
+
   private getSyncTimeoutMs(): number {
-    return Math.max(this.options.timeoutMs, 120000);
+    return Math.max(this.options.timeoutMs, DEVICE_SYNC_TIMEOUT_MS);
   }
 
   private async getJson<T>(url: string, timeoutMs = this.options.timeoutMs): Promise<T> {

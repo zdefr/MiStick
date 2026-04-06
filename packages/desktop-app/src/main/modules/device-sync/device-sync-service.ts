@@ -12,12 +12,7 @@ export class DeviceSyncService {
   ) {}
 
   async syncFromCloud(): Promise<MiHomeDeviceSummary[]> {
-    const homes = await this.cloudSyncPort.getHomes();
-    const devicesByHome = await Promise.all(
-      homes.map(async (home) => this.cloudSyncPort.getDevices(home.id)),
-    );
-
-    const devices = devicesByHome.flat();
+    const devices = await this.cloudSyncPort.getDevices();
     const resolvedDevices = await this.resolveDevices(devices);
 
     await this.cachePort.saveDevices(resolvedDevices);

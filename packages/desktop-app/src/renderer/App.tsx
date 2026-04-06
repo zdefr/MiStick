@@ -66,7 +66,7 @@ interface ProgressStyle extends CSSProperties {
 }
 
 interface FloatingAlertMessage {
-  key: string;
+  key: 'boot' | 'session' | 'device' | 'settings';
   tone: 'danger' | 'warning';
   message: string;
 }
@@ -646,6 +646,25 @@ export function App() {
     }
 
     setIsHydrating(false);
+  }
+
+  function handleDismissAlert(alertKey: FloatingAlertMessage['key']) {
+    switch (alertKey) {
+      case 'boot':
+        setBootError(null);
+        break;
+      case 'session':
+        setSessionError(null);
+        break;
+      case 'device':
+        setDeviceError(null);
+        break;
+      case 'settings':
+        setSettingsError(null);
+        break;
+      default:
+        break;
+    }
   }
 
   function handleDragPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1342,7 +1361,18 @@ export function App() {
         <section className="floating-alerts">
           {alertMessages.map((alert) => (
             <div key={alert.key} className={`floating-alert floating-alert--${alert.tone}`}>
-              {alert.message}
+              <div className="floating-alert__message">{alert.message}</div>
+              <button
+                type="button"
+                className="floating-alert__close"
+                onClick={() => {
+                  handleDismissAlert(alert.key);
+                }}
+                aria-label="关闭提示"
+                title="关闭提示"
+              >
+                ×
+              </button>
             </div>
           ))}
         </section>

@@ -3,8 +3,8 @@ import type { MiHomeDeviceSummary, MiHomeHomeSummary, MiHomeRoomSummary } from '
 
 export interface DeviceCloudSyncPort {
   getHomes(): Promise<MiHomeHomeSummary[]>;
-  getRooms(homeId: string): Promise<MiHomeRoomSummary[]>;
-  getDevices(homeId: string): Promise<MiHomeDeviceSummary[]>;
+  getRooms(homeId?: string): Promise<MiHomeRoomSummary[]>;
+  getDevices(homeId?: string): Promise<MiHomeDeviceSummary[]>;
 }
 
 export interface DeviceCachePort {
