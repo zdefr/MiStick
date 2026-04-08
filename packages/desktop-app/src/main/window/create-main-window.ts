@@ -1,14 +1,16 @@
 import path from 'node:path';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, type BrowserWindowConstructorOptions } from 'electron';
 import type { AppConfig } from '../../shared/config/types';
+import { createAppIconImage } from '../app-icon';
 import { applyWindowConfig } from './apply-window-config';
 import { resolveInitialWindowBounds } from './window-state';
 
 export function createMainWindow(config: AppConfig): BrowserWindow {
   const preloadPath = path.join(__dirname, '../preload/index.js');
   const bounds = resolveInitialWindowBounds(config);
+  const appIcon = createAppIconImage();
 
-  const window = new BrowserWindow({
+  const windowOptions: BrowserWindowConstructorOptions = {
     width: bounds.width,
     height: bounds.height,
     x: bounds.x,
@@ -24,7 +26,13 @@ export function createMainWindow(config: AppConfig): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
-  });
+  };
+
+  if (!appIcon.isEmpty()) {
+    windowOptions.icon = appIcon;
+  }
+
+  const window = new BrowserWindow(windowOptions);
 
   applyWindowConfig(window, config);
 

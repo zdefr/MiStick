@@ -47,6 +47,7 @@
             "output": "release"
         },
         "files": [
+            "assets/**/*",
             "dist/renderer/**/*",
             "dist-electron/**/*",
             "package.json"
@@ -62,6 +63,7 @@
             }
         ],
         "win": {
+            "icon": "build/icon.ico",
             "signAndEditExecutable": false,
             "target": [
                 {

@@ -18,6 +18,7 @@ import {
   HttpDeviceCloudSyncPort,
 } from './modules/device-sync';
 import { ConfigSessionPort, HttpMiHomeBridgeAuthPort, MiHomeSessionService } from './modules/mihome-session';
+import { destroyAppTray, ensureAppTray } from './tray/app-tray';
 import { createMainWindow } from './window/create-main-window';
 import { bindWindowStatePersistence } from './window/window-state';
 
@@ -139,6 +140,7 @@ async function bootstrap(): Promise<void> {
   registerIpcHandlers({ configService, deviceControlService, mihomeSessionService, deviceSyncService });
   const mainWindow = createMainWindow(config);
   bindWindowStatePersistence(mainWindow, configService, config);
+  ensureAppTray();
 
   if (isDev) {
     await mainWindow.loadURL(rendererDevServerUrl);
@@ -182,5 +184,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  destroyAppTray();
   void bundledBridgeService?.stop();
 });
