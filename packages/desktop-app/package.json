@@ -44,7 +44,8 @@
         "appId": "com.mijia.sticky",
         "productName": "mijia-sticky",
         "directories": {
-            "output": "release"
+            "output": "release",
+            "buildResources": "build"
         },
         "files": [
             "assets/**/*",
@@ -63,8 +64,7 @@
             }
         ],
         "win": {
-            "icon": "build/icon.ico",
-            "signAndEditExecutable": false,
+            "icon": "icon.ico",
             "target": [
                 {
                     "target": "nsis",
@@ -78,7 +78,10 @@
         "nsis": {
             "oneClick": false,
             "allowToChangeInstallationDirectory": true,
-            "createDesktopShortcut": "always"
+            "createDesktopShortcut": "always",
+            "installerIcon": "icon.ico",
+            "uninstallerIcon": "icon.ico",
+            "installerHeaderIcon": "icon.ico"
         }
     }
 }
